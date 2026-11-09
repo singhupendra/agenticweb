@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  customer
+  admin
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+}
+
+model Organization {
+  id        String    @id @default(uuid()) @db.Uuid
+  slug      String    @unique
+  name      String
+  timezone  String    @default("UTC")
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  users     User[]
+  services  Service[]
+  bookings  Booking[]
+  audit     AuditEvent[]
+  idem      IdempotencyRecord[]
+}
+
+model User {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  email          String
+  name           String
+  role           UserRole     @default(customer)
+  createdAt      DateTime     @default(now()) @db.Timestamptz
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  bookings       Booking[]
+
+  @@unique([organizationId, email])
+}
+
+model Service {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @db.Uuid
+  slug            String
+  name            String
+  description     String
+  durationMinutes Int
+  priceMinor      Int
+  currency        String       @db.Char(3)
+  active          Boolean      @default(true)
+  createdAt       DateTime     @default(now()) @db.Timestamptz
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  slots           Slot[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, active])
+}
+
+model Slot {
+  id        String    @id @default(uuid()) @db.Uuid
+  serviceId String    @db.Uuid
+  startsAt  DateTime  @db.Timestamptz
+  endsAt    DateTime  @db.Timestamptz
+  capacity  Int       @default(1)
+  service   Service   @relation(fields: [serviceId], references: [id])
+  bookings  Booking[]
+
+  @@unique([serviceId, startsAt])
+  @@index([startsAt])
+}
+
+model Booking {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  slotId         String        @db.Uuid
+  userId         String        @db.Uuid
+  status         BookingStatus @default(pending)
+  notes          String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz
+  updatedAt      DateTime      @updatedAt @db.Timestamptz
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  slot           Slot          @relation(fields: [slotId], references: [id])
+  user           User          @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([slotId])
+}
+
+// Idempotency records (contract: src/core/idempotency). Used from Phase 2.
+model IdempotencyRecord {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  key            String
+  scope          String // capability name + actor subject
+  requestHash    String
+  response       Json
+  createdAt      DateTime     @default(now()) @db.Timestamptz
+  expiresAt      DateTime     @db.Timestamptz
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, scope, key])
+}
+
+// Append-only audit log (contract: src/core/logging/audit.ts). Used from Phase 2.
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String?      @db.Uuid
+  occurredAt     DateTime     @default(now()) @db.Timestamptz
+  requestId      String
+  actorKind      String
+  actorId        String?
+  onBehalfOf     String?
+  grantId        String?
+  capability     String
+  outcome        String
+  resourceType   String?
+  resourceId     String?
+  inputHash      String?
+  detail         Json?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, occurredAt])
+  @@index([capability, occurredAt])
+}
