@@ -4,19 +4,26 @@ import { PrismaClient } from "../src/generated/prisma/client";
 const url = process.env.DATABASE_URL ?? "postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb";
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
 
+// Deterministic IDs so the dev actor header (x-dev-actor) can reference seeded users.
+export const SEED_IDS = {
+  org: "00000000-0000-4000-8000-0000000000a1",
+  admin: "00000000-0000-4000-8000-0000000000b1",
+  customer: "00000000-0000-4000-8000-0000000000b2",
+} as const;
+
 async function main() {
   const org = await db.organization.upsert({
     where: { slug: "northwind-studio" },
     update: {},
-    create: { slug: "northwind-studio", name: "Northwind Studio", timezone: "Asia/Kolkata" },
+    create: { id: SEED_IDS.org, slug: "northwind-studio", name: "Northwind Studio", timezone: "Asia/Kolkata" },
   });
   await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "admin@northwind.example" } },
-    update: {}, create: { organizationId: org.id, email: "admin@northwind.example", name: "Studio Admin", role: "admin" },
+    update: {}, create: { id: SEED_IDS.admin, organizationId: org.id, email: "admin@northwind.example", name: "Studio Admin", role: "admin" },
   });
   await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "customer@example.com" } },
-    update: {}, create: { organizationId: org.id, email: "customer@example.com", name: "Demo Customer" },
+    update: {}, create: { id: SEED_IDS.customer, organizationId: org.id, email: "customer@example.com", name: "Demo Customer" },
   });
   const services = [
     { slug: "architecture-review", name: "Architecture Review", description: "Deep-dive review of your system design with written recommendations.", durationMinutes: 90, priceMinor: 1500000 },

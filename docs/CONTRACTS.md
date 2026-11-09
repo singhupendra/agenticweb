@@ -61,4 +61,12 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 ## 6. Known gaps (owned by later phases)
 
-Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · durable audit/idempotency stores (in-memory today) · bookings/users capabilities (schemas + interfaces only) · MCP server, OpenAPI, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · Prisma repositories/migration/seed were **not exercised against a live Postgres in Phase 1** (no database was available to the Architect worker) — Backend must run `pnpm db:up && pnpm db:deploy && pnpm db:seed` and confirm `/api/ready` and the services routes first.
+Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, OpenAPI, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+
+## 7. Phase 2 additions (bookings and slots)
+
+* Capabilities: `slots.list`, `bookings.create|list|get|cancel` (see `specs/SPEC-002-bookings-and-slots.md`). Org-scoped authenticated capabilities use `loadResource` to return the organization/booking facts, so the policy enforces tenant isolation and ownership.
+* `requireUserId(actor)` (`core/auth`) is the only way a capability learns the acting user. Never take `userId` from input.
+* Durable stores: `PrismaIdempotencyStore`, `PrismaAuditLog` (`core/db/stores.ts`), wired by `createPrismaRuntime`. In-memory versions remain for unit tests.
+* Overbooking protection: `reserve` locks the slot row (`FOR UPDATE`) in a transaction; a partial unique index prevents one user holding two active bookings on a slot. Tests in `tests/db` need `DATABASE_URL_TEST` (Postgres with migrations applied; truncated on each test).
+* Seed ids are deterministic (`prisma/seed.ts`): org `...0a1`, admin `...0b1`, customer `...0b2`; use with `x-dev-actor` (`user|<id>|<org>`; dev only).

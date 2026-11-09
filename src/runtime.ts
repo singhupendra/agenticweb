@@ -4,11 +4,14 @@ import { DefaultPolicy } from "@/core/authorization";
 import { getEnv } from "@/core/env";
 import { InMemoryIdempotencyStore, type IdempotencyStore } from "@/core/idempotency";
 import { createLogger, InMemoryAuditLog, type AuditLog, type Logger } from "@/core/logging";
+import { getPrisma, PrismaAuditLog, PrismaIdempotencyStore } from "@/core/db";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { createOrganizationService, type OrganizationRepository } from "@/modules/organization/service";
 import { createPrismaOrganizationRepository } from "@/modules/organization/repository.prisma";
 import { createServiceCatalog, type ServiceRepository } from "@/modules/services/service";
 import { createPrismaServiceRepository } from "@/modules/services/repository.prisma";
-import { getPrisma } from "@/core/db";
+import { createBookingsService, type BookingRepository } from "@/modules/bookings/service";
+import { createPrismaBookingRepository } from "@/modules/bookings/repository.prisma";
 import { registry, type AppDeps } from "./capabilities";
 
 export interface Runtime {
@@ -19,20 +22,21 @@ export interface Runtime {
 export function createRuntime(o: {
   organizations: OrganizationRepository;
   services: ServiceRepository;
+  bookings: BookingRepository;
   audit?: AuditLog;
   idempotency?: IdempotencyStore;
   logger?: Logger;
   clock?: () => Date;
 }): Runtime {
   const organizations = createOrganizationService(o.organizations);
-  const deps: AppDeps = { organizations, catalog: createServiceCatalog({ organizations, repo: o.services }) };
+  const catalog = createServiceCatalog({ organizations, repo: o.services });
+  const deps: AppDeps = { organizations, catalog, bookings: createBookingsService({ organizations, catalog, repo: o.bookings }) };
   const logger = o.logger ?? createLogger();
   return {
     logger,
     executor: createExecutor({
       registry,
       policy: new DefaultPolicy(o.clock),
-      // TODO(Phase 2): Prisma-backed audit + idempotency. In-memory is per-process and NOT durable.
       audit: o.audit ?? new InMemoryAuditLog(),
       idempotency: o.idempotency ?? new InMemoryIdempotencyStore(),
       logger,
@@ -42,15 +46,20 @@ export function createRuntime(o: {
   };
 }
 
+/** Production wiring: Postgres repositories + durable idempotency + durable audit log. */
+export function createPrismaRuntime(db: PrismaClient, o: { logger?: Logger; clock?: () => Date } = {}): Runtime {
+  return createRuntime({
+    organizations: createPrismaOrganizationRepository(db),
+    services: createPrismaServiceRepository(db),
+    bookings: createPrismaBookingRepository(db),
+    audit: new PrismaAuditLog(db),
+    idempotency: new PrismaIdempotencyStore(db, o.clock),
+    logger: o.logger,
+    clock: o.clock,
+  });
+}
+
 let runtime: Runtime | undefined;
 export function getRuntime(): Runtime {
-  if (!runtime) {
-    const db = getPrisma();
-    runtime = createRuntime({
-      organizations: createPrismaOrganizationRepository(db),
-      services: createPrismaServiceRepository(db),
-      logger: createLogger({ level: getEnv().LOG_LEVEL }),
-    });
-  }
-  return runtime;
+  return (runtime ??= createPrismaRuntime(getPrisma(), { logger: createLogger({ level: getEnv().LOG_LEVEL }) }));
 }

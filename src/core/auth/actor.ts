@@ -3,6 +3,7 @@
  * Channels (REST/MCP/UI) resolve a request into exactly one Actor; nothing else in the system looks at cookies/headers/tokens.
  */
 import { z } from "zod";
+import { unauthenticated } from "../errors";
 
 export const SCOPES = [
   "services:read",
@@ -90,4 +91,11 @@ export function actorSubject(actor: Actor): string {
 /** Channel adapters implement this; the result is the ONLY identity input to capabilities. */
 export interface ActorResolver {
   resolve(request: Request): Promise<Actor>;
+}
+
+/** The acting user's id; throws 401 for anonymous / public-only agents. Identity never comes from input. */
+export function requireUserId(actor: Actor): string {
+  const id = effectiveUserId(actor);
+  if (id === null) throw unauthenticated();
+  return id;
 }
