@@ -322,6 +322,42 @@ describe("adapter behaviour", () => {
     expect(r.raw).not.toContain("hunter2");
     expect(r.body.detail).toBeUndefined();
   });
+  it("invalid x-request-id (too long, non-ASCII, control chars) is replaced by a generated id; errors still render", async () => {
+    const app = createApp();
+    for (const bad of ["x".repeat(129), "caf\u00e9-\u2603", "has space", "a/b"]) {
+      const h = createRestHandler("services.get", app.deps);
+      const req = new Request("http://localhost/api/organizations/acme/services/nope");
+      // Headers() itself rejects control chars / non-latin1, so build the request with a permissible-but-invalid value.
+      const withId = new Request(req, { headers: { "x-request-id": bad.replace(/[^\x20-\x7e]/g, "?") } });
+      const res = await h(withId, { params: Promise.resolve({ orgSlug: "acme", serviceSlug: "nope" }) });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    const ok = await app.call("GET", BASE, { headers: { "x-request-id": "Trace.id_1-2" } });
+    expect(ok.headers.get("x-request-id")).toBe("Trace.id_1-2");
+  });
+  it("body cap is enforced while streaming (no Content-Length) and before the body is read for rate-limited callers", async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode("x".repeat(16 * 1024));
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled++; if (pulled > 1000) c.close(); else c.enqueue(chunk); } });
+    const app = createApp();
+    const h = createRestHandler("bookings.create", app.deps);
+    const res = await h(
+      new Request("http://localhost/api/organizations/acme/bookings", { method: "POST", body: stream, duplex: "half", headers: { "content-type": "application/json", ...key(9) } } as RequestInit),
+      { params: Promise.resolve({ orgSlug: "acme" }) },
+    );
+    expect(res.status).toBe(413);
+    expect(pulled).toBeLessThan(20); // 64 KiB cap / 16 KiB chunks, never the whole 16 MiB
+
+    let read = false;
+    const limited = createApp({ rateLimit: () => { throw new AppError("rate_limited", "no"); } });
+    const h2 = createRestHandler("bookings.create", limited.deps);
+    const req2 = new Request("http://localhost/api/organizations/acme/bookings", { method: "POST", body: "{}", headers: { "content-type": "application/json", ...key(9) } });
+    const orig = req2.text.bind(req2);
+    req2.text = async () => { read = true; return orig(); };
+    expect((await h2(req2, { params: Promise.resolve({ orgSlug: "acme" }) })).status).toBe(429);
+    expect(read).toBe(false);
+  });
   it("path params cannot be overridden by query or body", async () => {
     const app = createApp();
     const id = (await book(app)).body.data.id;

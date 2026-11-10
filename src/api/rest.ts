@@ -11,6 +11,10 @@ import type { AnyCapability, HttpBinding } from "@/core/capabilities";
 import { registry } from "@/capabilities";
 import { getRuntime, type Runtime } from "@/runtime";
 
+const REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
+/** Client-supplied correlation ids are echoed in headers/logs: accept only a conservative charset, else generate one. */
+export const safeRequestId = (supplied: string | null): string => (supplied && REQUEST_ID.test(supplied) ? supplied : randomUUID());
+
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_PUBLIC_CACHE_SECONDS = 60;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
@@ -83,11 +87,31 @@ function queryParams(url: URL): Record<string, string> {
   return out;
 }
 
-async function readBody(request: Request): Promise<Record<string, unknown>> {
+const tooLarge = () => new AppError("payload_too_large", `Body must be at most ${MAX_BODY_BYTES} bytes.`);
+
+/** Read the body incrementally and abort as soon as the cap is exceeded (Content-Length may be absent or false). */
+async function readCapped(request: Request): Promise<string> {
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new AppError("payload_too_large", `Body must be at most ${MAX_BODY_BYTES} bytes.`);
-  const text = await request.text();
-  if (Buffer.byteLength(text) > MAX_BODY_BYTES) throw new AppError("payload_too_large", `Body must be at most ${MAX_BODY_BYTES} bytes.`);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await readCapped(request);
   if (!text.trim()) return {};
   const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   if (type !== "application/json" && !type.endsWith("+json")) {
@@ -129,7 +153,7 @@ function successResponse(cap: AnyCapability<never>, binding: HttpBinding, envelo
 
 export function createRestHandler(capabilityName: string, deps: RestDeps = { runtime: getRuntime, resolver: defaultResolver }) {
   return async (request: Request, ctx?: { params?: Promise<Record<string, string>> }): Promise<Response> => {
-    const requestId = request.headers.get("x-request-id") ?? randomUUID();
+    const requestId = safeRequestId(request.headers.get("x-request-id"));
     const url = new URL(request.url);
     try {
       const cap = registry.get(capabilityName);
@@ -137,11 +161,13 @@ export function createRestHandler(capabilityName: string, deps: RestDeps = { run
       const binding = bindingFor(cap, request.method);
       if (!binding) throw new AppError("method_not_allowed", `${request.method} is not supported here.`, { headers: { allow: [cap.http, ...(cap.httpAliases ?? [])].map((b) => b.method).join(", ") } });
       const params = (await ctx?.params) ?? {};
-      const body = BODY_METHODS.has(request.method) ? await readBody(request) : {};
-      // Path params win over body/query so callers cannot override identifiers.
-      const raw = { ...queryParams(url), ...body, ...params };
+      const query = queryParams(url);
+      // Identify the caller and rate-limit BEFORE buffering any body, so unauthenticated floods stay cheap.
       const actor = await deps.resolver().resolve(request);
       await deps.rateLimit?.({ request, actor, capability: capabilityName, requestId });
+      const body = BODY_METHODS.has(request.method) ? await readBody(request) : {};
+      // Path params win over body/query so callers cannot override identifiers.
+      const raw = { ...query, ...body, ...params };
       const envelope = await deps.runtime().executor.invoke(capabilityName, actor, raw, {
         requestId,
         idempotencyKey: request.headers.get("idempotency-key") ?? undefined,

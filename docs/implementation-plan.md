@@ -149,13 +149,15 @@ $ pnpm lint            -> eslint . (exit 0)
 $ pnpm tsc --noEmit    -> exit 0
 $ DATABASE_URL_TEST=... pnpm test:run
  Test Files  12 passed (12)
-      Tests  148 passed (148)      # 13 against real Postgres
+      Tests  150 passed (150)      # 13 against real Postgres (after AO review fixes)
 $ pnpm test:run (no DB)
  Test Files  11 passed | 1 skipped (12)
-      Tests  135 passed | 13 skipped (148)
+      Tests  137 passed | 13 skipped (150)
 $ pnpm build           -> exit 0; routes incl. ƒ /docs, ƒ /openapi.json, ƒ /api/organizations/[orgSlug]/bookings/[bookingId]
 ```
 
-Contract suite (`tests/api`, 44 tests): every response is validated with Ajv (JSON Schema 2020-12) against the generated OpenAPI (status documented, content-type documented, body schema, RFC 9457 consistency on every error). Mutation check: breaking `Location`/`Link` headers failed 10+ tests. Live walkthrough on `next dev` + seeded Postgres: list+sort+Link, ETag → 304, create 201 + Location, replay same key → same booking, PATCH 200, anonymous GET 401 problem+json, DELETE → cancelled, text/plain → 415, `/openapi.json` 3.1.0 with 9 paths, `/docs` 200 HTML.
+Contract suite (`tests/api`, 46 tests): every response is validated with Ajv (JSON Schema 2020-12) against the generated OpenAPI (status documented, content-type documented, body schema, RFC 9457 consistency on every error). Mutation check: breaking `Location`/`Link` headers failed 10+ tests. Live walkthrough on `next dev` + seeded Postgres: list+sort+Link, ETag → 304, create 201 + Location, replay same key → same booking, PATCH 200, anonymous GET 401 problem+json, DELETE → cancelled, text/plain → 415, `/openapi.json` 3.1.0 with 9 paths, `/docs` 200 HTML.
 
 Gaps: no OpenAPI meta-schema validation (structural checks only: refs resolve, unique operationIds, path params declared); `bookings.update` not exposed to MCP; rate limiting is a hook only; `resolveActor` does not exist yet in `core/auth`, the adapter still uses the `ActorResolver` interface through `defaultResolver()` (Security replaces it).
+
+AO review follow-up: request body is now read as a capped stream (413 aborts the read), after actor resolution + rate-limit hook; `x-request-id` is accepted only if `^[A-Za-z0-9._-]{1,128}$`, else a UUID is generated. Both covered by new tests that fail on the previous implementation.
