@@ -22,7 +22,7 @@ export const DEFAULT_PUBLIC_CACHE_SECONDS = 60;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
 /** The one identity entry point (bearer → session+CSRF → dev header → anonymous). */
-const defaultResolver: () => ActorResolver = () => ({ resolve: (r) => resolveActor(r) });
+export const defaultResolver: () => ActorResolver = () => ({ resolve: (r) => resolveActor(r) });
 
 /**
  * Hook for the rate limiter (owned by Security). Runs after the actor is known and before the capability.
