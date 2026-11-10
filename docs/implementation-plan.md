@@ -72,6 +72,12 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | docs/authentication.md (+ MCP worker guide), docs/authorization.md, threat-model rows | Security | done | files |
 | 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
 | 4–7 | see phases above | various | todo | — |
+| 6/7 | OpenTelemetry SDK/OTLP bootstrap, `traced()`, agent metrics, executor hook | DevOps | done | `tests/observability/*` (25 tests incl. real OTLP export to a local HTTP sink); live: `next start` standalone exported Next HTTP spans + nested `capability *` spans + agent metrics to a local OTLP sink |
+| 6 | Log redaction (key + value scrubbing) | DevOps | done | `tests/observability/redaction.test.ts` |
+| 6/7 | Grafana dashboard + Prometheus alerts + OTel collector compose profile | DevOps | done (static) | PromQL of 7 alerts + 15 panels parsed with the official lezer-promql parser; YAML parsed. `promtool`/collector `validate` run in CI only (local run of a downloaded binary was blocked) |
+| 7 | Dockerfile (multi-stage, non-root, healthcheck, standalone), compose, deploy/k8s | DevOps | done, **image build unverified locally** | Docker engine hangs; Podman VM crashed mid-build (pnpm install stage completed). Standalone bundle verified natively; hadolint/trivy not available locally — CI job `infra-lint`/`container` is the first real build |
+| 6/7 | CI hardening (audit, Playwright placeholder, Trivy+Grype, SBOM, infra lint) | DevOps | done (not yet run on GitHub) | actions pinned to SHAs; `pnpm audit --audit-level=high` exit 0 locally (1 moderate, dev-only) |
+| 3–7 | remaining items | various | todo | — |
 
 ## Verification (Phase 1)
 
@@ -228,3 +234,29 @@ Shared-file edits (additive): `McpBinding.destructive`, `ERROR_CODES.timeout` (5
 Rebased on Security PR #5 (95f0fc2): route uses `resolveActor(request,{resource:"mcp"})`, `decorateAuthError`, `getAgentGate()` (agent writes → `confirmation_required` + `confirmationId`/`approveUrl`, retry with `confirmationId`), shared REST rate-limit buckets (`defaultRateLimiting` now exported). Re-verified after rebase: lint clean, `tsc --noEmit` clean, `pnpm test:run` → 22 files passed | 1 skipped; 379 passed | 13 skipped (392).
 Live with mock issuer (`next dev`, seeded Postgres, SDK client + bearer): MCP-audience agent token lists 9 tools; REST-audience token on `/mcp` → 401 `invalid_token` + `resource_metadata`; create_booking → 428 `confirmation_required` + approveUrl; user bearer approves (200); retry with `confirmationId` → `confirmed`; cancel_booking → `confirmation_required`.
 **Gaps:** `confirm=true` is model-asserted (the gate is the hard control, and applies to agents only); OTel is a hook only (`McpDeps.metrics`; DevOps helpers not merged); `claude mcp add` commands not executed against a local Claude config; no stdio/SSE transport, no session resumability (stateless by design); in-memory confirmation/rate-limit stores are per-instance (Security's note).
+### DevOps / observability verification (Node 24.15.0, local Postgres 16)
+
+```
+$ pnpm lint
+
+> agenticweb@0.1.0 lint /Users/upendrasingh/.ao/data/worktrees/agenticweb/agenticweb-6
+> eslint .
+
+$ pnpm tsc --noEmit
+tsc exit=0
+$ DATABASE_URL_TEST=… pnpm test:run
+ Test Files  16 passed (16)
+      Tests  120 passed (120)
+$ pnpm test:run (no DB)
+ Test Files  15 passed | 1 skipped (16)
+      Tests  108 passed | 12 skipped (120)
+$ pnpm build
+✓ Compiled successfully in 837ms
+  Finished TypeScript in 1299ms ...
+build exit=
+$ pnpm audit --audit-level=high
+1 vulnerabilities found
+Severity: 1 moderate
+```
+
+Not verified: `docker build` (engine hung, Podman VM crashed), hadolint, Trivy/Grype results, `promtool test rules`, collector `validate`, Grafana rendering, rollback rehearsal, backups/restore, load test.

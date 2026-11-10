@@ -2,6 +2,16 @@ import { z } from "zod";
 
 const bool = z.enum(["true", "false"]).transform((v) => v === "true");
 
+/** OpenTelemetry settings. Telemetry is a no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set. See docs/observability.md. */
+export const OtelEnvShape = {
+  OTEL_SDK_DISABLED: bool.default(false),
+  OTEL_SERVICE_NAME: z.string().min(1).default("agenticweb"),
+  /** Empty string counts as unset (compose/K8s pass `VAR=`). */
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional()),
+  /** Head-sampling ratio, 0..1 (parent-based). */
+  OTEL_TRACES_SAMPLER_ARG: z.coerce.number().min(0).max(1).default(1),
+};
+
 export const EnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -23,6 +33,7 @@ export const EnvSchema = z
     RATE_LIMIT_ANON_PER_MIN: z.coerce.number().int().positive().default(60),
     RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(240),
     MAX_BODY_BYTES: z.coerce.number().int().positive().default(65536),
+    ...OtelEnvShape,
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.DEV_AUTH_ENABLED) {

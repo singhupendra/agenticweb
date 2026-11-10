@@ -21,7 +21,17 @@ export interface ExecutorOptions<Deps> {
   logger: Logger;
   deps: Deps;
   clock?: () => Date;
+  /** Optional telemetry wrapper (spans/metrics). Wraps the whole pipeline; must rethrow what `run` throws. */
+  instrument?: InvocationInstrument;
 }
+
+export interface InvocationInfo {
+  capability: string;
+  actorKind: Actor["kind"];
+  /** undefined when the capability does not exist. */
+  mutating: boolean | undefined;
+}
+export type InvocationInstrument = <T>(info: InvocationInfo, run: () => Promise<T>) => Promise<T>;
 
 export interface InvokeOptions {
   requestId?: string;
@@ -36,8 +46,7 @@ export interface CapabilityExecutor {
 export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecutor {
   const clock = o.clock ?? (() => new Date());
 
-  return {
-    async invoke(name, actor, rawInput, opts = {}) {
+  const invokeCore: CapabilityExecutor["invoke"] = async (name, actor, rawInput, opts = {}) => {
       const requestId = opts.requestId ?? randomUUID();
       const cap: AnyCapability<Deps> | undefined = o.registry.get(name);
       if (!cap) throw notFound("Capability");
@@ -131,6 +140,12 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
         if (!(e instanceof AppError)) logger.error("unhandled capability error", { error: e });
         throw e;
       }
-    },
+  };
+
+  const { instrument } = o;
+  if (!instrument) return { invoke: invokeCore };
+  return {
+    invoke: (name, actor, rawInput, opts) =>
+      instrument({ capability: name, actorKind: actor.kind, mutating: o.registry.get(name)?.mutating }, () => invokeCore(name, actor, rawInput, opts)),
   };
 }

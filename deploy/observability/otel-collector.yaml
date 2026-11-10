@@ -1,0 +1,33 @@
+# Local/reference OpenTelemetry Collector (contrib distribution). OTLP in → Jaeger (traces), Prometheus (metrics).
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }
+      http: { endpoint: 0.0.0.0:4318 }
+
+processors:
+  memory_limiter: { check_interval: 1s, limit_mib: 256 }
+  # Defence in depth: the app never records these, but drop them if any instrumentation ever does.
+  attributes/scrub:
+    actions:
+      - { key: http.request.header.authorization, action: delete }
+      - { key: http.request.header.cookie, action: delete }
+      - { key: http.response.header.set-cookie, action: delete }
+      - { key: http.request.header.x-dev-actor, action: delete }
+      - { key: db.statement, action: delete }
+      - { key: db.query.text, action: delete }
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls: { insecure: true }
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:  { receivers: [otlp], processors: [memory_limiter, attributes/scrub, batch], exporters: [otlp/jaeger, debug] }
+    metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [prometheus] }

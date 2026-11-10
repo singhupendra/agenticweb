@@ -12,6 +12,7 @@ import { createServiceCatalog, type ServiceRepository } from "@/modules/services
 import { createPrismaServiceRepository } from "@/modules/services/repository.prisma";
 import { createBookingsService, type BookingRepository } from "@/modules/bookings/service";
 import { createPrismaBookingRepository } from "@/modules/bookings/repository.prisma";
+import { createOtelInstrument } from "@/observability";
 import { registry, type AppDeps } from "./capabilities";
 
 export interface Runtime {
@@ -42,6 +43,7 @@ export function createRuntime(o: {
       logger,
       deps,
       clock: o.clock,
+      instrument: createOtelInstrument(),
     }),
   };
 }
