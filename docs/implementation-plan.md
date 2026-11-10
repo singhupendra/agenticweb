@@ -151,7 +151,7 @@ Evidence (Node 24, local Postgres 16): lint clean, `tsc` clean, `DATABASE_URL_TE
 
 ## Verification (Phase 3 — authn/security)
 
-Node v24.15.0, pnpm 10.33.0, 2026-11-10. Raw output (`DATABASE_URL_TEST` set, so the 12 Postgres tests ran too):
+Node v24.15.0, pnpm 10.33.0, 2026-11-10. Raw output (final run without `DATABASE_URL_TEST`: 12 Postgres tests skipped locally; they passed earlier in this phase and run in CI against a Postgres service):
 
 ```
 $ pnpm lint
@@ -159,8 +159,8 @@ $ pnpm lint
 $ pnpm tsc --noEmit
 (exit 0)
 $ pnpm test:run
- Test Files  15 passed (15)
-      Tests  255 passed (255)
+ Test Files  14 passed | 1 skipped (15)
+      Tests  243 passed | 12 skipped (255)
 $ pnpm build
 ✓ Compiled successfully
   Finished TypeScript
