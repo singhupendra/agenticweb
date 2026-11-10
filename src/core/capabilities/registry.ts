@@ -29,9 +29,12 @@ export function createRegistry<Deps>(caps: readonly AnyCapability<Deps>[]): Capa
     if (!NAME.test(c.name)) throw new Error(`Invalid capability name "${c.name}" (expected module.verb)`);
     if (names.has(c.name)) throw new Error(`Duplicate capability "${c.name}"`);
     names.add(c.name);
-    const route = `${c.http.method} ${c.http.path}`;
-    if (routes.has(route)) throw new Error(`Duplicate HTTP route "${route}"`);
-    routes.add(route);
+    for (const h of [c.http, ...(c.httpAliases ?? [])]) {
+      const route = `${h.method} ${h.path}`;
+      if (routes.has(route)) throw new Error(`Duplicate HTTP route "${route}"`);
+      routes.add(route);
+      if (h !== c.http && c.mutating === (h.method === "GET")) throw new Error(`Capability "${c.name}" has HTTP binding "${route}" inconsistent with mutating=${c.mutating}`);
+    }
     if (!TOOL.test(c.mcp.toolName)) throw new Error(`Invalid MCP tool name "${c.mcp.toolName}"`);
     if (tools.has(c.mcp.toolName)) throw new Error(`Duplicate MCP tool "${c.mcp.toolName}"`);
     tools.add(c.mcp.toolName);
@@ -43,14 +46,14 @@ export function createRegistry<Deps>(caps: readonly AnyCapability<Deps>[]): Capa
       throw new Error(`Capability "${c.name}" uses owner-or-admin but has no loadResource`);
     }
   }
-  const compiled = caps.map((c) => ({ c, ...compile(c.http.path) }));
+  const compiled = caps.flatMap((c) => [c.http, ...(c.httpAliases ?? [])].map((h) => ({ c, method: h.method, ...compile(h.path) })));
   return {
     all: () => caps,
     get: (n) => caps.find((c) => c.name === n),
     byMcpTool: (t) => caps.find((c) => c.mcp.toolName === t),
     matchHttp(method, pathname) {
-      for (const { c, re, keys } of compiled) {
-        if (c.http.method !== method) continue;
+      for (const { c, re, keys, method: m0 } of compiled) {
+        if (m0 !== method) continue;
         const m = re.exec(pathname);
         if (m) return { capability: c, params: Object.fromEntries(keys.map((k, i) => [k, decodeURIComponent(m[i + 1] ?? "")])) };
       }

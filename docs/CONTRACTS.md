@@ -61,7 +61,7 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 ## 6. Known gaps (owned by later phases)
 
-Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, OpenAPI, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
 ## 7. Phase 2 additions (bookings and slots)
 
@@ -70,3 +70,11 @@ Real authN (sessions, OAuth/agent token verification — currently anonymous, or
 * Durable stores: `PrismaIdempotencyStore`, `PrismaAuditLog` (`core/db/stores.ts`), wired by `createPrismaRuntime`. In-memory versions remain for unit tests.
 * Overbooking protection: `reserve` locks the slot row (`FOR UPDATE`) in a transaction; a partial unique index prevents one user holding two active bookings on a slot. Tests in `tests/db` need `DATABASE_URL_TEST` (Postgres with migrations applied; truncated on each test).
 * Seed ids are deterministic (`prisma/seed.ts`): org `...0a1`, admin `...0b1`, customer `...0b2`; use with `x-dev-actor` (`user|<id>|<org>`; dev only).
+
+## 8. Phase 3 additions (REST v1 + OpenAPI)
+
+* `docs/api-guide.md` is the REST reference. `/openapi.json` and `/docs` are generated from the registry by `src/api/openapi.ts`; never hand-write paths or schemas.
+* Capability additions (additive): `httpAliases` (extra REST spellings, e.g. `DELETE` cancel), `http.cacheSeconds` (public read caching). Registry validates aliases like primary routes.
+* New error codes: `payload_too_large` (413), `unsupported_media_type` (415), `method_not_allowed` (405).
+* Every route file must be `export const METHOD = restHandler("<capability>")` for each binding (checked by `tests/api/openapi-document.test.ts`).
+* Rate limiting plugs into `RestDeps.rateLimit` (see api-guide).

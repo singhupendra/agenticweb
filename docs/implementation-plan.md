@@ -55,7 +55,9 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Durable idempotency + audit (Postgres) | Architect | done | replay across runtime instances; AuditEvent rows for success/denied, hash only |
 | 2 | Slot list on service page | Architect | done | live page shows slots in org timezone |
 | 2 | Booking UI / human sign-in | Frontend/Backend | todo | needs Phase 3 session auth |
-| 3–7 | see phases above | various | todo | — |
+| 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
+| 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
+| 3–7 | remaining items (identity/authz, MCP, WebMCP, quality, delivery) | various | todo | — |
 
 ## Verification (Phase 1)
 
@@ -139,3 +141,23 @@ Live walkthrough (`next dev`, dev actor header): anonymous create → 401; no ke
 
 Fixes: claim-before-execute idempotency (in-memory + Postgres, with lease), replay path audited so a mutation can't stay unaudited after an audit-write failure, dev resolver returns anonymous on malformed scopes, `bookings.cancel` is a single conditional UPDATE.
 Evidence (Node 24, local Postgres 16): lint clean, `tsc` clean, `DATABASE_URL_TEST=… pnpm test:run` → 9 files / 91 tests pass (11 against real Postgres, incl. 6 concurrent same-key requests → 1 booking, 5 concurrent cancels → all succeed, lease supersede), without DB: Tests  80 passed | 11 skipped (91), build exit 0.
+
+### REST v1 verification (Node 24.15.0, local Postgres 16 on a throwaway cluster)
+
+```
+$ pnpm lint            -> eslint . (exit 0)
+$ pnpm tsc --noEmit    -> exit 0
+$ DATABASE_URL_TEST=... pnpm test:run
+ Test Files  12 passed (12)
+      Tests  150 passed (150)      # 13 against real Postgres (after AO review fixes)
+$ pnpm test:run (no DB)
+ Test Files  11 passed | 1 skipped (12)
+      Tests  137 passed | 13 skipped (150)
+$ pnpm build           -> exit 0; routes incl. ƒ /docs, ƒ /openapi.json, ƒ /api/organizations/[orgSlug]/bookings/[bookingId]
+```
+
+Contract suite (`tests/api`, 46 tests): every response is validated with Ajv (JSON Schema 2020-12) against the generated OpenAPI (status documented, content-type documented, body schema, RFC 9457 consistency on every error). Mutation check: breaking `Location`/`Link` headers failed 10+ tests. Live walkthrough on `next dev` + seeded Postgres: list+sort+Link, ETag → 304, create 201 + Location, replay same key → same booking, PATCH 200, anonymous GET 401 problem+json, DELETE → cancelled, text/plain → 415, `/openapi.json` 3.1.0 with 9 paths, `/docs` 200 HTML.
+
+Gaps: no OpenAPI meta-schema validation (structural checks only: refs resolve, unique operationIds, path params declared); `bookings.update` not exposed to MCP; rate limiting is a hook only; `resolveActor` does not exist yet in `core/auth`, the adapter still uses the `ActorResolver` interface through `defaultResolver()` (Security replaces it).
+
+AO review follow-up: request body is now read as a capped stream (413 aborts the read), after actor resolution + rate-limit hook; `x-request-id` is accepted only if `^[A-Za-z0-9._-]{1,128}$`, else a UUID is generated. Both covered by new tests that fail on the previous implementation.
