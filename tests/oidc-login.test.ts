@@ -214,6 +214,40 @@ describe("discovery", () => {
   });
 });
 
+describe("network / parse failures at the issuer are generic 400 login_failed, never 500", () => {
+  const mk = (f: (input: string, init?: RequestInit) => Promise<Response>) => new OidcClient({ issuer: ISSUER, clientId: CLIENT_ID, redirectUri: `${APP_URL}/api/auth/callback`, fetch: f, now: () => clock.now });
+  const failing: [string, (url: string) => Promise<Response> | null][] = [
+    ["discovery connection error", (u) => (u.includes("openid-configuration") ? Promise.reject(new TypeError("fetch failed")) : null)],
+    ["discovery non-JSON body", (u) => (u.includes("openid-configuration") ? Promise.resolve(new Response("<html>oops</html>", { status: 200 })) : null)],
+    ["discovery missing fields (zod)", (u) => (u.includes("openid-configuration") ? Promise.resolve(Response.json({ issuer: ISSUER })) : null)],
+    ["token endpoint connection error", (u) => (u.endsWith("/oauth/token") ? Promise.reject(new Error("ECONNRESET")) : null)],
+    ["token endpoint non-JSON body", (u) => (u.endsWith("/oauth/token") ? Promise.resolve(new Response("nope", { status: 200 })) : null)],
+    ["jwks connection error", (u) => (u.endsWith("/jwks") ? Promise.reject(new Error("timeout")) : null)],
+    ["jwks non-JSON body", (u) => (u.endsWith("/jwks") ? Promise.resolve(new Response("nope", { status: 200 })) : null)],
+  ];
+  for (const [name, break_] of failing) {
+    it(`${name} → 400 login_failed through the callback handler`, async () => {
+      const broken = mk((u, init) => break_(u) ?? idp.fetch(u, init));
+      const hh = createOidcHandlers({ appUrl: APP_URL, sessions, oidc: broken, secret: SESSION_SECRET, now: () => clock.now });
+      const l = await hh.login(req("/api/auth/login")); // discovery failures surface at login already
+      if (discoveryFails(name)) { expect(l.status).toBe(400); expect((await l.json()).code).toBe("login_failed"); return; }
+      const auth = loc(l); auth.searchParams.set("login_hint", "customer");
+      const back = loc(await idp.fetch(auth.toString()));
+      const cb = await hh.callback(req(`${back.pathname}${back.search}`, { headers: { cookie: cookieHeader(l) } }));
+      expect(cb.status).toBe(400);
+      expect((await cb.json()).code).toBe("login_failed");
+      expect(cookie(cb, "session")).toBeUndefined();
+    });
+  }
+  const discoveryFails = (n: string) => n.startsWith("discovery");
+  it("login itself returns 400 (not 500) when discovery is unreachable", async () => {
+    const hh = createOidcHandlers({ appUrl: APP_URL, sessions, oidc: mk(() => Promise.reject(new TypeError("fetch failed"))), secret: SESSION_SECRET });
+    const r = await hh.login(req("/api/auth/login"));
+    expect(r.status).toBe(400);
+    expect((await r.json()).code).toBe("login_failed");
+  });
+});
+
 describe("returnTo is same-site only", () => {
   for (const [input, out] of [
     ["/bookings", "/bookings"], ["/a?b=1#c", "/a?b=1#c"], [undefined, "/"], ["", "/"],

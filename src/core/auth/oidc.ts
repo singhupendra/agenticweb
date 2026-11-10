@@ -61,7 +61,20 @@ export class OidcClient {
     return (this.o.now?.() ?? new Date()).getTime();
   }
 
-  async discover(): Promise<Discovery> {
+  /** Every network/parse failure at the issuer becomes the generic `login_failed` (400); the cause is kept for logs only. */
+  private async guard<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      throw e instanceof AppError ? e : loginFailed(e);
+    }
+  }
+
+  discover(): Promise<Discovery> {
+    return this.guard(() => this.discoverUnguarded());
+  }
+
+  private async discoverUnguarded(): Promise<Discovery> {
     if (this.disc && this.now() - this.disc.at < DISCOVERY_TTL_MS) return this.disc.value;
     const res = await this.fetcher(`${this.o.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
     if (!res.ok) throw loginFailed(`discovery ${res.status}`);
@@ -86,7 +99,11 @@ export class OidcClient {
   }
 
   /** Redeems the code; returns the raw ID token. The issuer enforces PKCE + single use + redirect_uri equality. */
-  async exchange(code: string, verifier: string): Promise<string> {
+  exchange(code: string, verifier: string): Promise<string> {
+    return this.guard(() => this.exchangeUnguarded(code, verifier));
+  }
+
+  private async exchangeUnguarded(code: string, verifier: string): Promise<string> {
     const d = await this.discover();
     const body = new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: this.o.redirectUri, client_id: this.o.clientId, code_verifier: verifier });
     if (this.o.clientSecret) body.set("client_secret", this.o.clientSecret);
@@ -97,7 +114,11 @@ export class OidcClient {
     return json.id_token;
   }
 
-  private async keys(refresh = false): Promise<JWTVerifyGetKey> {
+  private keys(refresh = false): Promise<JWTVerifyGetKey> {
+    return this.guard(() => this.keysUnguarded(refresh));
+  }
+
+  private async keysUnguarded(refresh: boolean): Promise<JWTVerifyGetKey> {
     if (!refresh && this.jwks && this.now() - this.jwks.at < 600_000) return this.jwks.keys;
     const d = await this.discover();
     const res = await this.fetcher(d.jwks_uri);
