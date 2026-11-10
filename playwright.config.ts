@@ -16,6 +16,7 @@ if (!new URL(databaseUrl || "postgresql://x/").pathname.startsWith("/agenticweb_
 export default defineConfig({
   testDir: "tests/e2e",
   testMatch: "**/*.spec.ts",
+  globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: false,
   workers: 1, // scenarios share one seeded database
   retries: process.env.CI ? 1 : 0,

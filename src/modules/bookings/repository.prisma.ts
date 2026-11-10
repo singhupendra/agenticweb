@@ -12,17 +12,10 @@ const toRecord = (r: BookingRow): BookingRecord => ({
 });
 const isUniqueViolation = (e: unknown) => typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
 
-/**
- * Raw SQL must not bind JS Dates directly: the driver adapter sends them as zone-less `timestamp`, which Postgres then
- * interprets in the SESSION time zone (wrong by the zone offset when it is not UTC). An ISO string cast to timestamptz is
- * unambiguous. (Found by the agentic QA suite: past-slot cancellation was allowed on a non-UTC database.)
- */
-const tstz = (d: Date) => Prisma.sql`${d.toISOString()}::timestamptz`;
-
 export function createPrismaBookingRepository(db: PrismaClient): BookingRepository {
   return {
     async listAvailableSlots(q) {
-      const range = Prisma.sql`${q.from ? Prisma.sql`AND s."startsAt" >= ${tstz(q.from)}` : Prisma.empty} ${q.to ? Prisma.sql`AND s."startsAt" <= ${tstz(q.to)}` : Prisma.empty}`;
+      const range = Prisma.sql`${q.from ? Prisma.sql`AND s."startsAt" >= ${q.from}` : Prisma.empty} ${q.to ? Prisma.sql`AND s."startsAt" <= ${q.to}` : Prisma.empty}`;
       const base = Prisma.sql`
         SELECT s.id, s."serviceId", s."startsAt", s."endsAt",
                (s.capacity - COUNT(b.id) FILTER (WHERE b.status <> 'cancelled'))::int AS remaining
@@ -30,7 +23,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
         JOIN "Service" sv ON sv.id = s."serviceId"
         LEFT JOIN "Booking" b ON b."slotId" = s.id
         WHERE s."serviceId" = ${q.serviceId}::uuid AND sv."organizationId" = ${q.organizationId}::uuid
-          AND sv.active AND s."startsAt" > ${tstz(q.now)} ${range}
+          AND sv.active AND s."startsAt" > ${q.now} ${range}
         GROUP BY s.id
         HAVING s.capacity - COUNT(b.id) FILTER (WHERE b.status <> 'cancelled') > 0`;
       const [rows, count] = await Promise.all([
@@ -102,7 +95,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
         UPDATE "Booking" b SET status = 'cancelled', "updatedAt" = now()
         FROM "Slot" s
         WHERE b.id = ${bookingId}::uuid AND b."organizationId" = ${organizationId}::uuid
-          AND b."slotId" = s.id AND b.status <> 'cancelled' AND s."startsAt" > ${tstz(now)}
+          AND b."slotId" = s.id AND b.status <> 'cancelled' AND s."startsAt" > ${now}
         RETURNING b.id`;
       // Read back to return the row and classify a no-op (unknown / already cancelled / slot started).
       const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true, startsAt: true } } } });

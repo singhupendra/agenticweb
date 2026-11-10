@@ -7,7 +7,8 @@ export interface RunningApp { baseUrl: string; stop: () => Promise<void> }
 export async function startApp(databaseUrl: string, port = Number(process.env.AGENTIC_PORT ?? 3200)): Promise<RunningApp> {
   assertIsolatedDb(databaseUrl);
   const baseUrl = `http://localhost:${port}`;
-  // Reuse a server already started by a wrapper (same port) only if it is healthy.
+  // Never attach to someone else's server (it would talk to a different database): the port must be free.
+  if (await fetch(`${baseUrl}/api/health`).then(() => true, () => false)) throw new Error(`port ${port} is already serving; set AGENTIC_PORT to a free port`);
   const child: ChildProcess = spawn("pnpm", ["exec", "next", "dev", "-p", String(port)], {
     env: {
       ...process.env, DATABASE_URL: databaseUrl, APP_URL: baseUrl, NODE_ENV: "development", LOG_LEVEL: "error",
