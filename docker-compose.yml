@@ -34,6 +34,9 @@ services:
       APP_URL: http://localhost:3000
       DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@postgres:5432/agenticweb
       LOG_LEVEL: info
+      # Production mode requires an issuer + session secret (dev-only placeholders; bearer auth is not exercised here).
+      AUTH_ISSUER: http://localhost:3000
+      SESSION_SECRET: dev-only-session-secret-change-me-0123456789
       # Empty = telemetry off. Set to http://otel-collector:4318 when running the `observability` profile.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: agenticweb

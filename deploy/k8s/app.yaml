@@ -11,6 +11,7 @@ metadata: { name: agenticweb-env, namespace: agenticweb }
 type: Opaque
 stringData:
   DATABASE_URL: "postgresql://USER:PASSWORD@HOST:5432/agenticweb?sslmode=require"
+  SESSION_SECRET: "REPLACE-with-32+-random-chars"   # required in production (HMAC for session cookies)
   # OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer …"   # only if the backend needs credentials
 ---
 apiVersion: v1
@@ -20,6 +21,9 @@ data:
   NODE_ENV: production
   APP_URL: https://example.invalid           # public origin
   LOG_LEVEL: info
+  AUTH_ISSUER: https://idp.example.invalid   # required in production: OIDC issuer for bearer tokens
+  # AUTH_JWKS_URI: https://idp.example.invalid/.well-known/jwks.json
+  TRUST_PROXY: "true"   # ONLY if the ingress overwrites x-forwarded-for
   OTEL_SERVICE_NAME: agenticweb
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
   OTEL_TRACES_SAMPLER_ARG: "0.2"

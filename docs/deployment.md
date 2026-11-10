@@ -26,13 +26,16 @@ Validated at startup by `src/core/env.ts` (the app refuses to start on invalid c
 | `NODE_ENV` | yes | `production` (set by the image). |
 | `DATABASE_URL` | **yes (secret)** | `postgresql://…?sslmode=require`; role needs DML on app tables. Migration job needs DDL rights (use a separate, more privileged role if you split duties). |
 | `APP_URL` | yes | Public origin (used for links/metadata). |
-| `DEV_AUTH_ENABLED` | no | Must be unset/`false`. The app **refuses** `true` in production (tested). |
+| `AUTH_ISSUER` | **yes** | OIDC issuer for bearer tokens (exact `iss`); app refuses to start in production without it. Optional `AUTH_JWKS_URI`. |
+| `SESSION_SECRET` | **yes (secret)** | ≥ 32 random chars; HMAC for session cookies. |
+| `TRUST_PROXY`, `RATE_LIMIT_*`, `MAX_BODY_BYTES` | no | `TRUST_PROXY=true` only behind a proxy that overwrites `x-forwarded-for`; see `docs/authentication.md`. |
+| `DEV_AUTH_ENABLED` | no | Must be unset/`false` (as must `MOCK_ISSUER_ENABLED`). The app **refuses** `true` in production (tested). |
 | `LOG_LEVEL` | no | `info` (default). |
 | `DEFAULT_ORG_SLUG` | no | Demo org slug; default `northwind-studio`. |
 | `OTEL_*` | no | See `docs/observability.md`. `OTEL_EXPORTER_OTLP_HEADERS` is a secret. |
 | `PORT`, `HOSTNAME` | no | Image sets `3000`, `0.0.0.0`. |
 
-Later phases add secrets (session/token signing keys, OAuth client config). Keep all secrets in the platform secret store; never bake them into images or commit them. CI secret scanning (Trivy) fails the build on detected secrets.
+Further secrets (e.g. OAuth client config) may be added later. Keep all secrets in the platform secret store; never bake them into images or commit them. CI secret scanning (Trivy) fails the build on detected secrets.
 
 ## Release sequence
 

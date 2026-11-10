@@ -127,8 +127,8 @@ jobs:
       - name: Smoke test (non-root user, health endpoint)
         run: |
           test "$(docker run --rm --entrypoint id agenticweb:ci -u)" != "0"
-          docker run -d --name smoke -p 3000:3000 -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db agenticweb:ci
-          for i in $(seq 1 30); do curl -fs localhost:3000/api/health && break; sleep 1; done
+          docker run -d --name smoke -p 3000:3000 -e DATABASE_URL=postgresql://u:p@127.0.0.1:5432/db -e AUTH_ISSUER=https://idp.example.invalid -e SESSION_SECRET=ci-smoke-only-secret-0123456789abcdef agenticweb:ci
+          for _ in $(seq 1 30); do curl -fs localhost:3000/api/health && break; sleep 1; done
           curl -fs localhost:3000/api/health
           docker inspect --format '{{.State.Health.Status}}' smoke
           docker rm -f smoke
@@ -147,6 +147,7 @@ jobs:
           fail-build: true
           severity-cutoff: high
           only-fixed: true
+          output-format: table
       - name: Trivy repo scan (secrets, Dockerfile/compose misconfig)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
