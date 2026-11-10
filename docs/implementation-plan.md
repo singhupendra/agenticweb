@@ -134,3 +134,8 @@ $ pnpm build
 ```
 
 Live walkthrough (`next dev`, dev actor header): anonymous create → 401; no key → 400; create → 201; replay same key → 201 same booking, 1 row; same key other payload → 422; full slot → 409; list mine → 1; admin get → 200; agent with `bookings:read` get → 200; agent cancel without write scope → 403; owner cancel → 200 `cancelled`; AuditEvent rows recorded; IdempotencyRecord rows persisted.
+
+### AO review follow-up (idempotency claim, audit recovery, atomic cancel)
+
+Fixes: claim-before-execute idempotency (in-memory + Postgres, with lease), replay path audited so a mutation can't stay unaudited after an audit-write failure, dev resolver returns anonymous on malformed scopes, `bookings.cancel` is a single conditional UPDATE.
+Evidence (Node 24, local Postgres 16): lint clean, `tsc` clean, `DATABASE_URL_TEST=… pnpm test:run` → 9 files / 91 tests pass (11 against real Postgres, incl. 6 concurrent same-key requests → 1 booking, 5 concurrent cancels → all succeed, lease supersede), without DB: Tests  80 passed | 11 skipped (91), build exit 0.

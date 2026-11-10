@@ -53,7 +53,7 @@ export function createPrismaRuntime(db: PrismaClient, o: { logger?: Logger; cloc
     services: createPrismaServiceRepository(db),
     bookings: createPrismaBookingRepository(db),
     audit: new PrismaAuditLog(db),
-    idempotency: new PrismaIdempotencyStore(db, o.clock),
+    idempotency: new PrismaIdempotencyStore(db),
     logger: o.logger,
     clock: o.clock,
   });

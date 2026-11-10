@@ -95,6 +95,52 @@ describe.skipIf(!url)("bookings against Postgres", () => {
     ).rejects.toMatchObject({ code: "idempotency_key_reuse" });
   });
 
+  it("concurrent requests with the SAME key execute once (claim before execute)", async () => {
+    const slotId = await makeSlot({ capacity: 5 });
+    const u = await makeUser();
+    const k = key();
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => runtime().executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId }, { idempotencyKey: k })),
+    );
+    expect(await db.booking.count({ where: { slotId } })).toBe(1);
+    expect(results.filter((r) => r.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    for (const r of results) if (r.status === "rejected") expect(r.reason.code).toBe("conflict");
+    const rec = await db.idempotencyRecord.findMany();
+    expect(rec).toHaveLength(1);
+    expect(rec[0]?.state).toBe("done");
+  });
+
+  it("a failed attempt releases the claim; an expired lease can be superseded", async () => {
+    const store = runtime(); // ensures migrations/schema are usable
+    void store;
+    const { PrismaIdempotencyStore } = await import("@/core/db");
+    const s = new PrismaIdempotencyStore(db);
+    const now = Date.now();
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now)).toEqual({ state: "acquired" });
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now)).toEqual({ state: "in_progress" });
+    expect(await s.claim("sc", "key-aaaaaaaa", "h2", now)).toEqual({ state: "mismatch" });
+    await s.release("sc", "key-aaaaaaaa");
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now)).toEqual({ state: "acquired" });
+    // lease expires → a new claimant supersedes the crashed one
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now + 61_000)).toEqual({ state: "acquired" });
+    await s.complete("sc", "key-aaaaaaaa", { ok: 1 }, now + 3600_000);
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now + 62_000)).toEqual({ state: "done", response: { ok: 1 } });
+    await s.release("sc", "key-aaaaaaaa"); // no-op on done
+    expect((await s.claim("sc", "key-aaaaaaaa", "h1", now + 63_000)).state).toBe("done");
+  });
+
+  it("concurrent cancels of one booking all succeed idempotently and end cancelled", async () => {
+    const rt = runtime();
+    const slotId = await makeSlot();
+    const u = await makeUser();
+    const b = (await rt.executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId }, { idempotencyKey: key() })).data as { id: string };
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () => rt.executor.invoke("bookings.cancel", actorOf(u), { orgSlug: "acme", bookingId: b.id }, { idempotencyKey: key() })),
+    );
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    expect(await activeCount(slotId)).toBe(0);
+  });
+
   it("writes durable audit rows for success and denial without raw input", async () => {
     const rt = runtime();
     const slotId = await makeSlot();

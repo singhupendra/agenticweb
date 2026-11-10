@@ -97,9 +97,13 @@ model IdempotencyRecord {
   key         String
   scope       String // `${capability}|${actorSubject}`
   requestHash String
-  response    Json
-  createdAt   DateTime @default(now()) @db.Timestamptz
-  expiresAt   DateTime @db.Timestamptz
+  state       String    @default("done") // 'in_progress' | 'done' (CHECK constraint in migration)
+  response    Json? // null while in_progress
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  /// done: record expiry
+  expiresAt   DateTime  @db.Timestamptz
+  /// in_progress: lease expiry (crashed claimants can be superseded after this)
+  leaseExpiresAt DateTime? @db.Timestamptz
 
   @@unique([scope, key])
 }

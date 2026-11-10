@@ -81,12 +81,18 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
     },
 
     async cancel({ organizationId, bookingId, now }) {
+      // Single conditional UPDATE: the status/start-time checks and the transition are one atomic statement.
+      const updated = await db.$queryRaw<{ id: string }[]>`
+        UPDATE "Booking" b SET status = 'cancelled', "updatedAt" = now()
+        FROM "Slot" s
+        WHERE b.id = ${bookingId}::uuid AND b."organizationId" = ${organizationId}::uuid
+          AND b."slotId" = s.id AND b.status <> 'cancelled' AND s."startsAt" > ${now}
+        RETURNING b.id`;
+      // Read back to return the row and classify a no-op (unknown / already cancelled / slot started).
       const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true, startsAt: true } } } });
       if (!b) return { ok: false, reason: "not_found" };
-      if (b.status === "cancelled") return { ok: true, booking: toRecord(b) };
-      if (b.slot.startsAt <= now) return { ok: false, reason: "started" };
-      const u = await db.booking.update({ where: { id: b.id }, data: { status: "cancelled" }, include: { slot: { select: { serviceId: true } } } });
-      return { ok: true, booking: toRecord(u) };
+      if (updated.length === 1 || b.status === "cancelled") return { ok: true, booking: toRecord(b) };
+      return { ok: false, reason: "started" };
     },
   };
 }
