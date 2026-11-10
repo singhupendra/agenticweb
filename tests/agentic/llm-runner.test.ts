@@ -13,11 +13,12 @@ const open: Awaited<ReturnType<typeof startMcp>>[] = [];
 afterEach(async () => { await Promise.all(open.splice(0).map((s) => s.close())); });
 const call = (id: string, name: string, input: Record<string, unknown>): Completion => ({ stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: "tool_use", id, name, input }] });
 const done = (text: string): Completion => ({ stop_reason: "end_turn", usage: { input_tokens: 7, output_tokens: 3 }, content: [{ type: "text", text }] });
-const scripted = (steps: Completion[], seen: { tools?: string[]; results?: string[] } = {}): Complete => async (req) => {
+const scripted = (steps: (Completion | ((req: Parameters<Complete>[0]) => Completion))[], seen: { tools?: string[]; results?: string[] } = {}): Complete => async (req) => {
   seen.tools ??= req.tools.map((t) => t.name);
   const last = req.messages.at(-1)!;
   if (Array.isArray(last.content)) seen.results = [...(seen.results ?? []), ...last.content.map((b) => b.content ?? "")];
-  return steps.shift()!;
+  const step = steps.shift()!;
+  return typeof step === "function" ? step(req) : step;
 };
 
 describe("LLM runner plumbing", () => {
@@ -26,11 +27,15 @@ describe("LLM runner plumbing", () => {
     const seen: { tools?: string[]; results?: string[] } = {};
     const run = await runLlmAgent({
       mcp: await s.connect(), goal: "book it", orgSlug: "acme",
-      complete: scripted([call("1", "list_services", { orgSlug: "acme" }), call("2", "create_booking", { orgSlug: "acme", slotId: SLOTS.one.id, idempotencyKey: "plumbing-key-1", confirm: true }), done("Booked.")], seen),
+      hooks: { onConfirmation: (id) => s.gate.approve(id, user) }, // the simulated HUMAN approves out of band
+      complete: scripted([call("1", "list_services", { orgSlug: "acme" }), call("2", "create_booking", { orgSlug: "acme", slotId: SLOTS.one.id, idempotencyKey: "plumbing-key-1" }),
+        // the model repeats the identical call WITH the confirmationId it was given (the human approved out of band via the hook)
+        (req) => call("3", "create_booking", { orgSlug: "acme", slotId: SLOTS.one.id, idempotencyKey: "plumbing-key-1", confirmationId: /confirmationId\W+([0-9a-f-]{36})/.exec(JSON.stringify(req.messages.at(-1)))![1] }),
+        done("Booked.")], seen),
     });
     expect(seen.tools).toEqual(expect.arrayContaining(["list_services", "create_booking", "get_booking"]));
-    expect(run).toMatchObject({ turns: 3, stoppedBy: "end_turn", finalText: "Booked.", tokens: { input: 27, output: 13 } });
-    expect(run.toolCalls.map((c) => [c.tool, c.ok])).toEqual([["list_services", true], ["create_booking", true]]);
+    expect(run).toMatchObject({ turns: 4, stoppedBy: "end_turn", finalText: "Booked.", tokens: { input: 37, output: 18 } });
+    expect(run.toolCalls.map((c) => [c.tool, c.ok, c.code])).toEqual([["list_services", true, undefined], ["create_booking", false, "confirmation_required"], ["create_booking", true, undefined]]);
     expect(textJson(await (await s.connect()).callTool({ name: "list_my_bookings", arguments: { orgSlug: "acme" } })).items).toHaveLength(1);
   });
 

@@ -17,18 +17,18 @@ async function failing(client: Awaited<ReturnType<Channels["mcp"]>>, name: strin
   return toolJson(r);
 }
 /**
- * Invalid write input. KNOWN GAP (reported in docs/test-report.md): the human-confirmation gate runs BEFORE schema validation, so an
- * invalid action may first be answered with `confirmation_required`. The contract we enforce: it can never execute — after the
- * human approves, the retry is rejected with `validation_failed`, and nothing is created.
+ * Invalid write input. The MCP server validates BEFORE it asks the human (fixed in the hardening PR; see docs/test-report.md), so an
+ * invalid action is answered with `validation_failed` / `idempotency_key_required` and never solicits an approval. The helper still
+ * accepts the older "approve, then rejected" outcome: either way it can never execute and nothing is created.
  */
 async function rejectedInvalidWrite(client: Awaited<ReturnType<Channels["mcp"]>>, args: Json): Promise<Json> {
   const first = await failing(client, "create_booking", args);
-  if (first.code === "validation_failed") return first;
+  if (first.code === "validation_failed" || first.code === "idempotency_key_required") return first; // invalid input never asks the human
   expect(first.code).toBe("confirmation_required");
   await humanApprover(ch)(first.confirmationId);
   return failing(client, "create_booking", { ...args, confirmationId: first.confirmationId });
 }
-const book = (slotId: string, extra: Json = {}) => ({ orgSlug: ORG_SLUG, slotId, idempotencyKey: newKey(), confirm: true, ...extra });
+const book = (slotId: string, extra: Json = {}) => ({ orgSlug: ORG_SLUG, slotId, idempotencyKey: newKey(), ...extra });
 /** An agent client fully approved to write (delegating `userId`), for tests that must get PAST the human gate. */
 async function approvedBooking(client: Awaited<ReturnType<Channels["mcp"]>>, args: Json, userId = CUSTOMER_ID): Promise<Json> {
   const pending = toolJson(await client.callTool({ name: "create_booking", arguments: args }));
@@ -111,10 +111,12 @@ describe("invalid ids / incorrect agent assumptions", () => {
     expect(p.code).toBe("conflict");
     expect(await ch.activeBookingsOnSlot(slot.id)).toHaveLength(1);
   });
-  it("agent assumes it can skip the explicit confirm flag → rejected before anything executes", async () => {
+  it("agent asserts its own approval (confirm=true) or skips approval altogether → held for the human, nothing executes", async () => {
     const slot = await ch.freshSlot("quick-consult"); const n = await ch.bookingCount();
-    const p = await failing(await ch.mcp(await ch.agentToken()), "create_booking", { orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: newKey() });
-    expect(p.code).toBe("validation_failed");
+    for (const [extra, code] of [[{}, "confirmation_required"], [{ confirm: true }, "validation_failed"]] as const) {
+      const p = await failing(await ch.mcp(await ch.agentToken()), "create_booking", { orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: newKey(), ...extra });
+      expect(p.code).toBe(code);
+    }
     expect(await ch.bookingCount()).toBe(n);
   });
   it("agent assumes it can set identity/status fields (userId, status, organizationId) → strict validation rejects", async () => {
@@ -131,7 +133,7 @@ describe("invalid ids / incorrect agent assumptions", () => {
     const slot = await ch.freshSlot("quick-consult"); const n = await ch.bookingCount();
     const r = await ch.rest("POST", "/bookings", { token: await ch.userToken(), body: { slotId: slot.id } });
     expect(r.status).toBe(400);
-    expect((await rejectedInvalidWrite(await ch.mcp(await ch.agentToken()), { orgSlug: ORG_SLUG, slotId: slot.id, confirm: true })).code).toBe("idempotency_key_required");
+    expect((await rejectedInvalidWrite(await ch.mcp(await ch.agentToken()), { orgSlug: ORG_SLUG, slotId: slot.id })).code).toBe("idempotency_key_required");
     expect(await ch.bookingCount()).toBe(n);
   });
 });

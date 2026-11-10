@@ -247,19 +247,21 @@ $ pnpm tsc --noEmit
 (exit 0)
 $ pnpm test:run   # no DATABASE_URL_TEST
  Test Files  25 passed | 2 skipped (27)
-      Tests  457 passed | 29 skipped (486)
+      Tests  468 passed | 30 skipped (498)
 $ DATABASE_URL_TEST=…/agenticweb_hard_test pnpm test:run
- Test Files  27 passed (27)
-      Tests  486 passed (486)
+ Test Files  31 passed (31)
+      Tests  498 passed (498)
 $ pnpm build
 ✓ Compiled successfully in 638ms
   Finished TypeScript in 1140ms ...
 (exit 0; routes incl. ƒ /approvals/[id], ƒ /bookings, ƒ /api/auth/{login,callback,session,logout}, ƒ /api/confirmations/[id]{,/approve,/decline})
-$ E2E_DATABASE_URL=…/agenticweb_hard_e2e pnpm test:e2e
-  43 passed, 1 skipped (desktop + Pixel 5; incl. 10 new: OIDC sign-in → my bookings → sign-out, returnTo open-redirect, forged callback, MCP write held → human approves on /approvals/<id> → single use, decline)
+$ QA_ADMIN_DATABASE_URL=…:55439/postgres pnpm test:e2e:isolated
+  45 passed, 3 skipped (after merging Phase 6 QA; desktop + Pixel 5; incl. 10 new: OIDC sign-in → my bookings → sign-out, returnTo open-redirect, forged callback, MCP write held → human approves on /approvals/<id> → single use, decline)
 ```
 
 New suites: `tests/oidc-login.test.ts` (53), `tests/confirmations-http.test.ts` (9), `tests/executor-abort.test.ts` (3), `tests/db/auth-stores.integration.test.ts` (15), schema-aware sanitiser (+4), MCP confirmation tests rewritten (`confirm` removed; any-actor gating, self-approval, decline, cross-user spend), `AppError` cross-copy identity (+2).
+
+After merging main (Phase 6 QA, #8): its agentic suites were updated to the new MCP contract (no `confirm` argument; invalid input never solicits approval; approvals are spent when checked) and `QA_ADMIN_DATABASE_URL=…:55439/postgres pnpm test:agentic` → **36 passed (36)** against the real app + isolated non-UTC Postgres. That run found a flaw in the mock issuer (default grant id collided across users/scope sets → 401 for a second user); it now derives one grant per (user, client, scope set).
 
 Mutation checks (each break made ≥1 test fail; 13/13 caught): MCP gate for all actors (5 tests), owner-only approve, confirmation single-use, OIDC `state`, OIDC `nonce`, `returnTo` guard, logout CSRF, atomic rate-limit increment (PG), conditional replay upsert (PG), grant revocation (PG), sanitiser leaves ids alone, executor abort-before-execute, `AppError` brand.
 

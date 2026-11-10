@@ -19,6 +19,7 @@ export function AuthNav() {
   }, []);
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin", headers: { "x-csrf-token": s.csrfToken ?? "" } });
+    setS({ authenticated: false }); // the layout (and this component) stays mounted across client navigation
     router.push("/");
     router.refresh(); // drop cached server-rendered state of the signed-in user
   }

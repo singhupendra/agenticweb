@@ -2,7 +2,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppError } from "@/core/errors";
-import { AgentConfirmationGate } from "@/agents/policies";
+import { AgentConfirmationGate, InMemoryConfirmationStore } from "@/agents/policies";
 import { createRuntime } from "@/runtime";
 import { createMcpHandler } from "@/agents/mcp/server";
 import { InMemoryOrganizationRepository } from "@/modules/organization/service";
@@ -211,7 +211,7 @@ describe("writes: human-bound confirmation, idempotency, lifecycle", () => {
   it("model-asserted `confirm` is not an accepted argument and unlocks nothing", async () => {
     const s = await start();
     const r = await (await s.connect(user)).callTool(book(SLOTS.one.id, "key-eeeeeeee", { confirm: true }));
-    expect(textJson(r).code).toBe("confirmation_required"); // asserting confirm=true is not an approval
+    expect(textJson(r).code).toBe("validation_failed"); // unknown argument: rejected outright, nothing runs, no approval is solicited
     expect(s.rt.bookingsRepo.bookings).toHaveLength(0);
   });
   it("the model cannot approve for the human: only the owning user can, nobody else", async () => {
@@ -239,6 +239,24 @@ describe("writes: human-bound confirmation, idempotency, lifecycle", () => {
     await s.gate.approve(p.confirmationId, user);
     const r = await (await s.connect(user2)).callTool(book(SLOTS.one.id, "key-ssssssss", { confirmationId: p.confirmationId }));
     expect(textJson(r).code).toBe("forbidden");
+  });
+  it("an invalid write (bad arguments / bad idempotency key) never asks the human: validation_failed, no confirmation minted", async () => {
+    let minted = 0;
+    const store = new InMemoryConfirmationStore();
+    const create = store.create.bind(store);
+    store.create = async (...a) => { minted++; return create(...a); };
+    const s = await start({ gate: () => new AgentConfirmationGate(store) });
+    const c = await s.connect(user);
+    const bad = await c.callTool({ name: "create_booking", arguments: { orgSlug: "acme", slotId: "not-a-uuid", idempotencyKey: "key-badbadbad" } });
+    expect(textJson(bad).code).toBe("validation_failed");
+    const extra = await c.callTool({ name: "create_booking", arguments: { orgSlug: "acme", slotId: SLOTS.one.id, userId: "x", idempotencyKey: "key-badbadbad" } });
+    expect(textJson(extra).code).toBe("validation_failed");
+    const nokey = await c.callTool({ name: "create_booking", arguments: { orgSlug: "acme", slotId: SLOTS.one.id } });
+    expect(textJson(nokey).code).toBe("idempotency_key_required");
+    expect(minted).toBe(0);
+    const ok = await c.callTool(book(SLOTS.one.id, "key-goodgood"));
+    expect(textJson(ok).code).toBe("confirmation_required"); // a valid write still needs the human
+    expect(minted).toBe(1);
   });
   it("without a configured gate the factory refuses to build (fail closed)", () => {
     expect(() => createMcpHandler({ runtime: () => testRuntime(), resolver: () => ({ resolve: async () => user }), appUrl: () => "http://localhost:3000" } as never)).toThrow(/gate/i);

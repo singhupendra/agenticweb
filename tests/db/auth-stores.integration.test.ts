@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PrismaClient } from "@/generated/prisma/client";
-import { PrismaConfirmationStore, PrismaGrantStore, PrismaRateLimitStore, PrismaReplayGuard } from "@/core/db";
+import { PG_POOL_OPTIONS, PrismaConfirmationStore, PrismaGrantStore, PrismaRateLimitStore, PrismaReplayGuard } from "@/core/db";
 import { createAccessTokenVerifier, MockIssuer } from "@/core/auth";
 import { createRateLimiter } from "@/core/security";
 import { AgentConfirmationGate } from "@/agents/policies";
@@ -19,7 +19,7 @@ describe.skipIf(!url)("durable auth stores (Postgres)", () => {
   let db: PrismaClient;
   let t = Date.parse("2026-11-09T10:00:00Z");
   const now = () => t;
-  beforeAll(() => { db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) }); });
+  beforeAll(() => { db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url!, ...PG_POOL_OPTIONS }) }); });
   afterAll(async () => { await db?.$disconnect(); });
   beforeEach(async () => {
     t = Date.parse("2026-11-09T10:00:00Z");

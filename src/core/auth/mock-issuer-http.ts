@@ -1,4 +1,5 @@
 /** Dev-only HTTP surface of the mock issuer: JWKS and a token-minting endpoint. 404 unless MOCK_ISSUER_ENABLED. */
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getEnv } from "../env";
 import { notFound, problemResponse, validationError } from "../errors";
@@ -41,16 +42,18 @@ export async function mockTokenResponse(request: Request): Promise<Response> {
     const b = parsed.data;
     const o = { audience: resourceUri(env.APP_URL, b.resource), expiresInSec: b.expiresInSec };
     if (b.kind !== "agent" && (!b.userId || !b.organizationId)) throw validationError([{ path: "userId", message: "userId and organizationId are required" }]);
+    // One grant per (user, client, scope set): the mock issuer plays the consent screen, so re-minting for another user or with
+    // other scopes must neither collide with nor re-scope an existing grant. The derived id is what the token carries.
+    const grantId = `${b.grantId}-${createHash("sha256").update(JSON.stringify([b.userId ?? "", b.clientId, [...b.scopes].sort()])).digest("hex").slice(0, 12)}`;
     if (b.kind === "agent") {
-      // The mock issuer plays the consent screen: the user "consented" to this client+scopes, recorded durably (and revocable).
       const grants = await getGrantStore();
-      await grants?.put?.({ grantId: b.grantId, userId: b.userId ?? b.clientId, clientId: b.clientId, scopes: b.scopes }).catch((e: unknown) => {
+      await grants?.put?.({ grantId, userId: b.userId ?? b.clientId, clientId: b.clientId, scopes: b.scopes }).catch((e: unknown) => {
         if ((e as { code?: string }).code !== "conflict") throw e; // existing grant of the same owner is fine; a revoked one stays revoked
       });
     }
     const token =
       b.kind === "agent"
-        ? await issuer.agent({ clientId: b.clientId, grantId: b.grantId, scopes: b.scopes, userId: b.userId, organizationId: b.organizationId }, o)
+        ? await issuer.agent({ clientId: b.clientId, grantId, scopes: b.scopes, userId: b.userId, organizationId: b.organizationId }, o)
         : await issuer.user({ userId: b.userId as string, organizationId: b.organizationId as string, admin: b.kind === "admin" }, o);
     return Response.json({ access_token: token, token_type: "Bearer", expires_in: b.expiresInSec }, { headers: { "cache-control": "no-store" } });
   } catch (e) {

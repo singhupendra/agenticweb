@@ -21,6 +21,7 @@ import { registry as defaultRegistry } from "@/capabilities";
 import { CONFIRMATION_ID_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
 import type { Runtime } from "@/runtime";
 import { z } from "zod";
+import { assertValidKey } from "@/core/idempotency";
 import { sanitizeBySchema, sanitizeUntrusted } from "./sanitize";
 import { CONFIRMATION_HEADER, type AgentConfirmationGate } from "@/agents/policies";
 
@@ -137,8 +138,11 @@ export function createMcpHandler(deps: McpDeps) {
       try {
         // Every write needs the human's out-of-band approval, bound to (actor, tool, args hash, expiry) and single-use.
         // The model cannot supply it: approval happens in the human's own browser session (/approvals/<id>).
-        await deps.gate().check(actor, cap, args, typeof confirmationId === "string" ? confirmationId : null, { all: true });
-        const timeout = new AppError("timeout", `Tool did not finish within ${timeoutMs} ms. If this was a write, retry with the SAME idempotencyKey.`);
+        // Input that cannot run (schema or idempotency-key violations) never asks the human: the executor reports it.
+        if (cap.input.safeParse(args).success && idempotencyKeyOk(idempotencyKey)) {
+          await deps.gate().check(actor, cap, args, typeof confirmationId === "string" ? confirmationId : null, { all: true });
+        }
+        const timeout = new AppError("timeout", `Tool did not finish within ${timeoutMs} ms. If this was a write, retry with the SAME idempotencyKey (its human approval was spent, so you will be asked for a fresh one).`);
         const envelope = await Promise.race([
           deps.runtime().executor.invoke(cap.name, actor, args, { requestId, idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined, signal: controller.signal }),
           new Promise<never>((_, reject) => {
@@ -217,6 +221,15 @@ export function createMcpHandler(deps: McpDeps) {
       return problemHttp(e instanceof AppError ? e : new AppError("internal"), instance, requestId);
     }
   };
+}
+
+function idempotencyKeyOk(key: unknown): boolean {
+  try {
+    assertValidKey(typeof key === "string" ? key : undefined);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const outputSchemas = new WeakMap<object, unknown>();
