@@ -76,37 +76,47 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
         if (resource === null) throw notFound();
         enforce(o.policy.decide(actor, cap.requirement, resource));
 
-        // 3. Idempotency (mutations only)
+        // 3. Idempotency (mutations only): CLAIM the key before executing.
         let scope = "";
         let key = "";
-        let requestHash = "";
+        let claimed = false;
         if (cap.mutating) {
           key = assertValidKey(opts.idempotencyKey);
           scope = `${name}|${actorSubject(actor)}`;
-          requestHash = hashInput(input);
-          const prior = await o.idempotency.find(scope, key);
-          if (prior) {
-            if (prior.requestHash !== requestHash) {
-              throw new AppError("idempotency_key_reuse", "This Idempotency-Key was used with a different request.");
-            }
-            return toEnvelope(prior.response, requestId);
+          const claim = await o.idempotency.claim(scope, key, hashInput(input), clock().getTime());
+          if (claim.state === "mismatch") {
+            throw new AppError("idempotency_key_reuse", "This Idempotency-Key was used with a different request.");
           }
+          if (claim.state === "in_progress") {
+            throw new AppError("conflict", "A request with this Idempotency-Key is still in progress.", { headers: { "retry-after": "1" } });
+          }
+          if (claim.state === "done") {
+            // Replays are audited too, so a mutation whose original audit write failed is still recorded on retry.
+            await audit("success", { resource, detail: { replayed: true } });
+            return toEnvelope(claim.response, requestId);
+          }
+          claimed = true;
         }
 
-        // 4. Execute + output validation (strips undeclared fields: no accidental data leaks)
-        const result = await cap.execute(ctx, input);
-        const out = cap.output.safeParse(result);
-        if (!out.success) {
-          logger.error("output schema violation", { issues: toIssues(out.error) });
-          throw new AppError("internal", "output schema violation");
+        try {
+          // 4. Execute + output validation (strips undeclared fields: no accidental data leaks)
+          const result = await cap.execute(ctx, input);
+          const out = cap.output.safeParse(result);
+          if (!out.success) {
+            logger.error("output schema violation", { issues: toIssues(out.error) });
+            throw new AppError("internal", "output schema violation");
+          }
+          if (cap.mutating) {
+            await o.idempotency.complete(scope, key, out.data, clock().getTime() + IDEMPOTENCY_TTL_MS);
+            claimed = false; // completed: from here a retry replays instead of re-executing
+          }
+          // Audit AFTER the result is stored under the key. If this write fails the caller sees a 500 and the
+          // retry's replay path writes the audit event, so the mutation cannot stay permanently unaudited.
+          await audit("success", { resource });
+          return toEnvelope(out.data, requestId);
+        } finally {
+          if (claimed) await o.idempotency.release(scope, key).catch((e) => logger.error("idempotency release failed", { error: e }));
         }
-
-        if (cap.mutating) {
-          const saved = await o.idempotency.save(scope, key, { requestHash, response: out.data, expiresAt: clock().getTime() + IDEMPOTENCY_TTL_MS });
-          if (!saved) throw new AppError("conflict", "A request with this Idempotency-Key is already in progress.");
-        }
-        await audit("success", { resource });
-        return toEnvelope(out.data, requestId);
       } catch (e) {
         if (isAuthzError(e)) {
           await audit("denied", { resource, detail: { code: e.code } });

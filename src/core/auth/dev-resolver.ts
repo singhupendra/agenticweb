@@ -19,7 +19,9 @@ export class DevHeaderActorResolver implements ActorResolver {
     const [kind, a, b, c, d] = raw.split("|");
     if ((kind === "user" || kind === "admin") && a && b) return { kind, userId: a, organizationId: b };
     if (kind === "agent" && a) {
-      const scopes = (d ?? "").split(",").filter(Boolean).map((s) => ScopeSchema.parse(s));
+      const parsed = (d ?? "").split(",").filter(Boolean).map((s) => ScopeSchema.safeParse(s));
+      if (parsed.some((r) => !r.success)) return ANONYMOUS; // malformed header never widens (or crashes) access
+      const scopes = parsed.flatMap((r) => (r.success ? [r.data] : []));
       const now = this.opts.now?.() ?? new Date();
       return {
         kind: "agent",

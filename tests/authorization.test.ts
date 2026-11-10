@@ -58,8 +58,8 @@ describe("dev actor resolver", () => {
     const a = await r.resolve(new Request("http://x", { headers: { "x-dev-actor": `agent|c1|${USER_ID}|${ORG_ID}|services:read,bookings:read` } }));
     expect(a).toMatchObject({ kind: "agent", clientId: "c1", onBehalfOf: { userId: USER_ID }, delegation: { scopes: ["services:read", "bookings:read"] } });
   });
-  it("rejects unknown scopes instead of widening access", async () => {
+  it("treats unknown scopes as anonymous instead of widening access or throwing", async () => {
     const r = new DevHeaderActorResolver({ enabled: true, nodeEnv: "test" });
-    await expect(r.resolve(new Request("http://x", { headers: { "x-dev-actor": "agent|c1|-|-|root" } }))).rejects.toThrow();
+    expect(await r.resolve(new Request("http://x", { headers: { "x-dev-actor": "agent|c1|-|-|root" } }))).toEqual({ kind: "anonymous" });
   });
 });
