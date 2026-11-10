@@ -45,7 +45,13 @@ spec:
         - name: migrate
           image: IMAGE_MIGRATE            # built with --target migrate
           envFrom: [{ secretRef: { name: agenticweb-env } }]
-          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:   # read-only root FS: pnpm/prisma need scratch space
+            - { name: tmp, mountPath: /tmp }
+            - { name: home, mountPath: /home/node }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: home, emptyDir: {} }
 ---
 apiVersion: apps/v1
 kind: Deployment
