@@ -11,17 +11,17 @@ import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { Actor, ActorResolver } from "@/core/auth";
+import { decorateAuthError, resourceUri, type Actor, type ActorResolver } from "@/core/auth";
 import { AppError, toProblem, validationError, type Envelope, type ProblemDetails } from "@/core/errors";
 import { PROBLEM_CONTENT_TYPE } from "@/core/errors";
 import type { CapabilityRegistry } from "@/core/capabilities";
 import type { Logger } from "@/core/logging";
 import { actorSubject } from "@/core/auth";
 import { registry as defaultRegistry } from "@/capabilities";
-import { CONFIRM_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
+import { CONFIRMATION_ID_ARG, CONFIRM_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
 import type { Runtime } from "@/runtime";
 import { sanitizeUntrusted } from "./sanitize";
-import { authChallenge } from "./challenge";
+import { CONFIRMATION_HEADER, type AgentConfirmationGate } from "@/agents/policies";
 
 export const MCP_SERVER_INFO = { name: "agenticweb", version: "1.0.0" } as const;
 export const MAX_MCP_BODY_BYTES = 64 * 1024;
@@ -37,12 +37,16 @@ export interface McpMetrics {
 
 export interface McpDeps {
   runtime: () => Runtime;
-  /** Identity entry point. With Security's `resolveActor`, pass `{resource:"mcp"}` so tokens must be audience-bound to /mcp. */
+  /** Identity entry point; must resolve with `{resource:"mcp"}` so bearer tokens are audience-bound to /mcp. */
   resolver: () => ActorResolver;
   /** Public origin of the app (for resource metadata + Origin check). */
   appUrl: () => string;
   registry?: CapabilityRegistry<never>;
   rateLimit?: McpRateLimitHook;
+  /** Called when the resolver rejects credentials (separate rate-limit bucket for failed auth). */
+  authFailure?: (request: Request) => Promise<void> | void;
+  /** Human-confirmation gate for agent transactional scopes (Security): out-of-band approval before a write runs. */
+  gate?: () => AgentConfirmationGate;
   metrics?: McpMetrics;
   timeoutMs?: number;
   /** Extra browser origins allowed to call /mcp (the app's own origin is always allowed). */
@@ -111,18 +115,24 @@ export function createMcpHandler(deps: McpDeps) {
       };
       const fail = (err: unknown): CallToolResult => {
         if (!(err instanceof AppError)) logger.error("mcp tool unexpected error", { error: err, requestId, tool: cap.mcp.toolName });
-        const problem = sanitizeUntrusted<ProblemDetails>(toProblem(err, { requestId, instance }));
+        const approval = err instanceof AppError ? err.headers?.[CONFIRMATION_HEADER] : undefined;
+        const problem = sanitizeUntrusted<ProblemDetails & { confirmationId?: string; approveUrl?: string }>({
+          ...toProblem(err, { requestId, instance }),
+          ...(approval ? { confirmationId: approval, approveUrl: `${new URL(deps.appUrl()).origin}/api/confirmations/${approval}/approve` } : {}),
+        });
         finish("error", problem.code);
         return { isError: true, content: [{ type: "text", text: JSON.stringify(problem) }], _meta: { [UNTRUSTED_META]: true } };
       };
 
-      const { [IDEMPOTENCY_ARG]: idempotencyKey, [CONFIRM_ARG]: confirm, ...args } = (req.params.arguments ?? {}) as Record<string, unknown>;
+      const { [IDEMPOTENCY_ARG]: idempotencyKey, [CONFIRM_ARG]: confirm, [CONFIRMATION_ID_ARG]: confirmationId, ...args } = (req.params.arguments ?? {}) as Record<string, unknown>;
       // A write needs the human's explicit approval of this exact action; checked before anything executes.
       if (cap.mutating && confirm !== true) {
         return fail(validationError([{ path: CONFIRM_ARG, message: "Ask the user to approve this exact action, then call again with confirm=true." }]));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
+        // Agents with transactional scopes also need the delegating human's out-of-band approval (bound to these exact args).
+        await deps.gate?.().check(actor, cap, args, typeof confirmationId === "string" ? confirmationId : null);
         const envelope = await Promise.race([
           deps.runtime().executor.invoke(cap.name, actor, args, { requestId, idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined }),
           new Promise<never>((_, reject) => {
@@ -145,7 +155,7 @@ export function createMcpHandler(deps: McpDeps) {
     const requestId = randomUUID();
     const url = new URL(request.url);
     const appUrl = deps.appUrl();
-    const resource = `${new URL(appUrl).origin}/mcp`;
+    const resource = resourceUri(appUrl, "mcp");
     const instance = url.pathname;
     try {
       // Stateless: no server-initiated stream, no session teardown.
@@ -161,7 +171,8 @@ export function createMcpHandler(deps: McpDeps) {
       try {
         actor = await deps.resolver().resolve(request);
       } catch (e) {
-        throw authChallenge(e, resource);
+        await deps.authFailure?.(request);
+        throw decorateAuthError(e, resource);
       }
 
       const text = await readCapped(request);
@@ -178,7 +189,7 @@ export function createMcpHandler(deps: McpDeps) {
       for (const m of calls) {
         const cap = typeof m.params?.name === "string" ? registry.byMcpTool(m.params.name) : undefined;
         // Credentials required for a non-public tool → 401 with the discovery pointer, so MCP clients start OAuth.
-        if (cap && cap.requirement.access !== "public" && actor.kind === "anonymous") throw authChallenge(new AppError("unauthenticated", "Sign in to use this tool."), resource);
+        if (cap && cap.requirement.access !== "public" && actor.kind === "anonymous") throw decorateAuthError(new AppError("unauthenticated", "Sign in to use this tool."), resource);
         await deps.rateLimit?.({ request, actor, capability: cap?.name ?? "unknown", requestId });
       }
 

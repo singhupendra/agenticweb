@@ -2,6 +2,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { afterEach, describe, expect, it } from "vitest";
 import { AppError } from "@/core/errors";
+import { AgentConfirmationGate } from "@/agents/policies";
 import { createRuntime } from "@/runtime";
 import { InMemoryOrganizationRepository } from "@/modules/organization/service";
 import { InMemoryServiceRepository } from "@/modules/services/service";
@@ -47,6 +48,8 @@ describe("discovery: tools/list", () => {
     for (const n of ["create_booking", "update_booking", "cancel_booking"]) {
       expect(by[n]!.annotations?.readOnlyHint).toBe(false);
       expect(by[n]!.inputSchema.required).toEqual(expect.arrayContaining(["idempotencyKey", "confirm"]));
+      expect(by[n]!.inputSchema.properties).toHaveProperty("confirmationId");
+      expect(by[n]!.inputSchema.required).not.toContain("confirmationId");
     }
     expect(by.cancel_booking!.annotations?.destructiveHint).toBe(true);
     expect(by.create_booking!.annotations?.destructiveHint).toBe(false);
@@ -150,6 +153,12 @@ describe("authentication (MCP authorization spec)", () => {
     expect(h).toContain('error="invalid_token"');
     expect(h).toContain('resource_metadata="http://localhost:3000/.well-known/oauth-protected-resource/mcp"');
   });
+  it("reports failed authentication to the auth-failure hook", async () => {
+    let n = 0;
+    const s = await start({ authFailure: () => { n++; }, resolver: () => ({ resolve: async () => { throw new AppError("unauthenticated", "bad"); } }) });
+    expect((await s.raw({ jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(401);
+    expect(n).toBe(1);
+  });
   it("the Authorization header is never forwarded to capabilities (no token passthrough)", async () => {
     const seen: string[] = [];
     const rt = testRuntime();
@@ -236,6 +245,41 @@ describe("writes: confirmation, idempotency, lifecycle", () => {
     const events = s.rt.auditLog.events.filter((e) => e.outcome === "success");
     expect(events.map((e) => e.capability)).toEqual(["bookings.create", "bookings.update", "bookings.cancel"]);
     expect(events[0]!.actor).toMatchObject({ kind: "agent" });
+  });
+});
+
+describe("out-of-band human confirmation for agents (Security gate)", () => {
+  const writer = agent(["bookings:read", "bookings:write", "services:read"]);
+  it("first attempt returns confirmation_required + id + approval URL; runs only after the user approves; single use", async () => {
+    const gate = new AgentConfirmationGate();
+    const s = await start({ gate: () => gate });
+    const c = await s.connect(writer);
+    const first = await c.callTool(book(SLOTS.one.id, "key-llllllll"));
+    expect(first.isError).toBe(true);
+    const p = textJson(first);
+    expect(p).toMatchObject({ code: "confirmation_required", status: 428 });
+    expect(p.confirmationId).toBeTruthy();
+    expect(p.approveUrl).toBe(`http://localhost:3000/api/confirmations/${p.confirmationId}/approve`);
+    // not approved yet, and nothing was booked
+    const pending = await c.callTool(book(SLOTS.one.id, "key-llllllll", { confirmationId: p.confirmationId }));
+    expect(textJson(pending).code).toBe("confirmation_required");
+    // an agent cannot approve its own action
+    await expect(gate.approve(p.confirmationId, writer)).rejects.toMatchObject({ code: "forbidden" });
+    await gate.approve(p.confirmationId, user);
+    // bound to the exact arguments
+    const other = await c.callTool(book(SLOTS.one.id, "key-llllllll", { confirmationId: p.confirmationId, notes: "tampered" }));
+    expect(textJson(other).code).toBe("forbidden");
+    const ok = await c.callTool(book(SLOTS.one.id, "key-llllllll", { confirmationId: p.confirmationId }));
+    expect(ok.isError).toBeFalsy();
+    expect(ok.structuredContent).toMatchObject({ slotId: SLOTS.one.id });
+    // single use: replaying the consumed approval for a new key is refused
+    const replay = await c.callTool(book(SLOTS.one.id, "key-mmmmmmmm", { confirmationId: p.confirmationId }));
+    expect(textJson(replay).code).toBe("forbidden");
+  });
+  it("reads and non-agent actors are not gated", async () => {
+    const s = await start({ gate: () => new AgentConfirmationGate() });
+    expect((await (await s.connect(writer)).callTool({ name: "list_my_bookings", arguments: { orgSlug: "acme" } })).isError).toBeFalsy();
+    expect((await (await s.connect(user)).callTool(book(SLOTS.one.id, "key-nnnnnnnn"))).isError).toBeFalsy();
   });
 });
 

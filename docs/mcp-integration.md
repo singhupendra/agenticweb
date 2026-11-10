@@ -25,16 +25,16 @@ Every tool has a unique name, a **static** description (never built from stored 
 ### Writes
 Mutating tools take two extra required arguments:
 * `idempotencyKey` (8–128 chars `[A-Za-z0-9_-]`): same key + same arguments replays the original result; same key + different arguments → `idempotency_key_reuse`; a *new* key for a slot the user already holds → `conflict` (DB unique index). Retry a timed-out write with the **same** key.
-* `confirm: true` — must be literally `true`, otherwise nothing runs (`validation_failed`, path `confirm`). The server `instructions` and the argument description tell the model to set it only after the human approved that exact action. This is a best-effort gate (a model can lie); the hard controls are the delegated scope, the owner check and idempotency. Security's out-of-band confirmation (`src/agents/policies/confirmation.ts`, PR #5) is the stronger gate to wire in when it lands.
+* `confirm: true` — must be literally `true`, otherwise nothing runs (`validation_failed`, path `confirm`). The server `instructions` and the argument description tell the model to set it only after the human approved that exact action. `confirm` is a best-effort, model-asserted gate (a model can lie). The hard controls are the delegated scope, the owner check, idempotency and — for **agents** with `bookings:write` — Security's out-of-band `AgentConfirmationGate`: the first write attempt returns an `isError` result with `code: confirmation_required` (428), a `confirmationId` and an `approveUrl`; the delegating human approves via `POST <approveUrl>` (session or user bearer token; agents cannot approve); the agent retries with identical arguments plus `confirmationId` (bound to the exact arguments, expires in 5 min, single use). Human (`user`) actors are not gated.
 
 ## Authentication & authorization (MCP authorization spec)
 * `initialize`, `tools/list` and public tools work anonymously.
 * A `tools/call` for a non-public tool without credentials → **HTTP 401** + `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"` (RFC 9728) so clients start OAuth discovery.
 * A bad/expired token (resolver throws `unauthenticated`) → 401 with the same pointer; it is never silently downgraded to anonymous.
-* Tokens must be audience-bound to this server (`<origin>/mcp`, RFC 8707). Verification lives in the `ActorResolver` (Security PR #5: `resolveActor(request, {resource:"mcp"})`). The Authorization header is read only by the resolver and **never forwarded** (no token passthrough; a test asserts the secret never reaches the executor).
+* Tokens must be audience-bound to this server (`<origin>/mcp`, RFC 8707): the route resolves with `resolveActor(request, {resource:"mcp"})`, so a REST-audience token is a 401 `invalid_token` (verified live). Protected-resource metadata is served by `/.well-known/oauth-protected-resource/mcp` (Security). The Authorization header is read only by the resolver and **never forwarded** (no token passthrough; a test asserts the secret never reaches the executor).
 * Authorization is the executor's: agents get only scopes ∩ the delegating user's rights, others' bookings are `not_found`, no admin capability is exposed. `tools/list` hides tools outside the agent's scopes.
 * Browser `Origin` other than the app origin → 403 (DNS-rebinding protection). Native clients send no `Origin`.
-* Body ≤ 64 KiB (413), malformed JSON → 400 JSON-RPC parse error. A rate-limit hook (`McpDeps.rateLimit`, same contract as REST) runs per `tools/call` after the actor is known; a thrown `rate_limited` becomes HTTP 429 + `Retry-After`.
+* Body ≤ 64 KiB (413), malformed JSON → 400 JSON-RPC parse error. The route shares REST's rate-limit buckets (`defaultRateLimiting`; failed auth uses its own bucket via `McpDeps.authFailure`); `McpDeps.rateLimit` runs per `tools/call` after the actor is known; a thrown `rate_limited` becomes HTTP 429 + `Retry-After`.
 
 ## Errors
 Capability failures are returned as **tool results with `isError: true`**; the text content is the RFC 9457 problem JSON (`type`, `title`, `status`, `code`, `detail`, `errors[]`, `requestId`) — identical `code/status/title/type` to REST (parity test). Unknown tool = JSON-RPC `InvalidParams`. Unexpected errors are a generic `internal` problem (no message leak). Tool timeout (`timeoutMs`, default 10 s) → problem `timeout` (504); the underlying write may still have committed, so retry with the same `idempotencyKey`.
@@ -82,7 +82,13 @@ await client.callTool({ name: "create_booking", arguments: { orgSlug: "northwind
 ```
 
 ## Tests
-`tests/mcp/*` run the real SDK client over a real HTTP server around `createMcpHandler`: discovery and schema validity (Ajv), execution + structured output, REST parity, invalid args, authn (401 challenge, bad token, no passthrough), authz (scope, public-only agent, IDOR), confirmation, idempotent replay and duplicate-booking prevention, update/cancel lifecycle + audit, prompt-injection sanitisation, timeout, Origin/method/body-size hardening, rate-limit and metrics hooks.
+`tests/mcp/*` (incl. the confirmation gate) run the real SDK client over a real HTTP server around `createMcpHandler`: discovery and schema validity (Ajv), execution + structured output, REST parity, invalid args, authn (401 challenge, bad token, no passthrough), authz (scope, public-only agent, IDOR), confirmation, idempotent replay and duplicate-booking prevention, update/cancel lifecycle + audit, prompt-injection sanitisation, timeout, Origin/method/body-size hardening, rate-limit and metrics hooks.
 
-## After Security PR #5 merges
-Replace `defaultResolver()` in `src/app/mcp/route.ts` with `resolveActor(request, {resource:"mcp"})`, `authChallenge` with `decorateAuthError`, and consider requiring the out-of-band confirmation for writes.
+## Local OAuth-style walkthrough (mock issuer, dev only)
+```bash
+MOCK_ISSUER_ENABLED=true SESSION_SECRET=<32+ chars> APP_URL=http://localhost:3000 pnpm dev
+TOKEN=$(curl -s localhost:3000/api/dev/mock-issuer/token -H 'content-type: application/json' \
+  -d '{"kind":"agent","userId":"<user>","organizationId":"<org>","scopes":["services:read","bookings:read","bookings:write"],"resource":"mcp"}' | jq -r .access_token)
+claude mcp add --transport http agenticweb-dev http://localhost:3000/mcp --header "Authorization: Bearer $TOKEN"
+```
+(`resource` must be `mcp`; see `docs/authentication.md`.)
