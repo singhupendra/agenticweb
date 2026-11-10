@@ -12,7 +12,7 @@ export interface Address { streetAddress?: string; addressLocality?: string; add
 const clean = <T extends Record<string, unknown>>(o: T): T =>
   Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== "")) as T;
 
-export const absoluteUrl = (baseUrl: string, path: string) => `${baseUrl.replace(/\/$/, "")}${path === "/" ? "" : path}` || baseUrl;
+export const absoluteUrl = (baseUrl: string, path: string) => `${baseUrl.replace(/\/$/, "")}${path === "/" ? "" : path}`;
 
 /** minor units → decimal string (assumes 2 minor digits, as the rest of the app does). */
 export const priceFromMinor = (minor: number) => (minor / 100).toFixed(2);

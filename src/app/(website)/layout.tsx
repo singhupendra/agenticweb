@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { WebMcpRegistrar } from "@/app/components/webmcp-registrar";
+import { WebMcpClient } from "@/app/components/webmcp-client";
 
 export default function WebsiteLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -24,7 +24,7 @@ export default function WebsiteLayout({ children }: { children: React.ReactNode 
           Agent-friendly: see <a className="underline" href="/llms.txt">llms.txt</a>.
         </p>
       </footer>
-      <WebMcpRegistrar />
+      <WebMcpClient />
     </>
   );
 }

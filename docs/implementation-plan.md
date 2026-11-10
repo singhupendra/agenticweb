@@ -174,7 +174,7 @@ $ pnpm test:run        → Test Files  11 passed | 1 skipped (12); Tests  113 pa
                          (31 new: tests/discovery/{jsonld,crawl,webmcp}.test.ts; skipped = Postgres integration tests, DATABASE_URL_TEST unset)
 $ pnpm build           → Compiled successfully; routes incl. /, /services, /services/[serviceSlug], /bookings/[bookingId], /llms.txt, /robots.txt, /sitemap.xml
 $ E2E_DATABASE_URL=…/agenticweb_fe pnpm test:e2e
-                       → 31 passed, 1 skipped (keyboard test skipped on mobile), desktop + Pixel 5, axe wcag2a/2aa/21a/21aa clean on home, services, detail (anon + signed-in form), booking status
+                       → 33 passed, 1 skipped (after review fix: +/webmcp.json test; keyboard test skipped on mobile), desktop + Pixel 5, axe wcag2a/2aa/21a/21aa clean on home, services, detail (anon + signed-in form), booking status
 ```
 
 Covered end-to-end: anonymous browse, sign-in-required states, signed-in book → status → cancel (double-submit safe via per-render Idempotency-Key), validation error announced, unknown/foreign booking → not-found, JSON-LD FAQ == visible FAQ, discovery files, WebMCP absent (site works) and polyfilled (read-only tools for anon, REST parity, confirm/decline on mutation).

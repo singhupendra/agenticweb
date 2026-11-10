@@ -72,3 +72,11 @@ test.describe("signed-in with WebMCP polyfill", () => {
     expect(cancelled.data.status).toBe("cancelled");
   });
 });
+
+test("/webmcp.json is auth-aware and never cached", async ({ request }) => {
+  const anon = await request.get("/webmcp.json");
+  expect(anon.headers()["cache-control"]).toContain("no-store");
+  expect((await anon.json()).tools.some((t: { mutating: boolean }) => t.mutating)).toBe(false);
+  const signed = await request.get("/webmcp.json", { headers: CUSTOMER_HEADERS });
+  expect((await signed.json()).tools.some((t: { name: string }) => t.name === "create_booking")).toBe(true);
+});

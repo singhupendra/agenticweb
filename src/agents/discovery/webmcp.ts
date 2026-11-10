@@ -60,7 +60,7 @@ export function detectModelContext(env: Pick<WebMcpEnv, "document" | "navigator"
 }
 
 export function buildRequest(tool: WebMcpManifestTool, rawInput: Record<string, unknown>, defaults: Record<string, string>, uuid: () => string) {
-  const input: Record<string, unknown> = { ...defaults, ...rawInput };
+  const input: Record<string, unknown> = { ...rawInput, ...defaults }; // site-fixed defaults (orgSlug) cannot be overridden by tool input
   const key = typeof input[IDEMPOTENCY_ARG] === "string" ? (input[IDEMPOTENCY_ARG] as string) : undefined;
   delete input[IDEMPOTENCY_ARG];
   const used = new Set<string>();

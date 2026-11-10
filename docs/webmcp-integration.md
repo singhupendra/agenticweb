@@ -8,6 +8,7 @@ WebMCP is a W3C Web Machine Learning Community Group **Draft Community Group Rep
 * Browser support: Chrome only (flag/origin trial) per secondary sources; others need a polyfill (e.g. MCP-B). **Nothing here depends on native support.** Re-verify before relying on it.
 
 ## What we ship
+* The manifest is served per visitor from `/webmcp.json` (`no-store`, same actor resolver as REST) and fetched client-side only when WebMCP is detected, so the layout never reads headers and pages stay static-capable.
 * `buildWebMcpManifest` (server, `src/agents/discovery/webmcp.ts`) derives tools from the capability registry via `listTools` (same Zod → JSON Schema as MCP). No hand-written tools. `orgSlug` is defaulted; the idempotency key is optional (auto-generated).
 * `registerWebMcp` (client) feature-detects and registers; **strict no-op** if unsupported. Each registration is isolated in try/catch; cleanup aborts the signal.
 * Execution calls the **same REST endpoints** (`/api/organizations/...`) with `credentials: "same-origin"`, so authentication and authorization are exactly those of the signed-in visitor. No token handling in WebMCP code.
