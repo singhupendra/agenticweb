@@ -20,7 +20,7 @@ export const DEFAULT_PUBLIC_CACHE_SECONDS = 60;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
 let resolver: ActorResolver | undefined;
-function defaultResolver(): ActorResolver {
+export function defaultResolver(): ActorResolver {
   const env = getEnv();
   return (resolver ??= env.DEV_AUTH_ENABLED
     ? new DevHeaderActorResolver({ enabled: true, nodeEnv: env.NODE_ENV })
