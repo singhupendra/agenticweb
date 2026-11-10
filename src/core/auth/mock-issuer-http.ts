@@ -4,6 +4,7 @@ import { getEnv } from "../env";
 import { notFound, problemResponse, validationError } from "../errors";
 import { ScopeSchema } from "./actor";
 import { getMockIssuer } from "./mock-issuer";
+import { getMockOidc } from "./mock-oidc";
 import { getGrantStore, resourceUri } from "./resolve-actor";
 
 const MintBody = z.strictObject({
@@ -52,6 +53,16 @@ export async function mockTokenResponse(request: Request): Promise<Response> {
         ? await issuer.agent({ clientId: b.clientId, grantId: b.grantId, scopes: b.scopes, userId: b.userId, organizationId: b.organizationId }, o)
         : await issuer.user({ userId: b.userId as string, organizationId: b.organizationId as string, admin: b.kind === "admin" }, o);
     return Response.json({ access_token: token, token_type: "Bearer", expires_in: b.expiresInSec }, { headers: { "cache-control": "no-store" } });
+  } catch (e) {
+    return problemResponse(e);
+  }
+}
+
+/** Mock OIDC endpoints (discovery, authorize, oauth/token) for the local sign-in demo. 404 unless MOCK_ISSUER_ENABLED. */
+export async function mockOidcResponse(request: Request): Promise<Response> {
+  try {
+    const { env } = await enabledIssuer();
+    return (await getMockOidc(`${new URL(env.APP_URL).origin}/api/dev/mock-issuer`, env.OIDC_CLIENT_ID)).handle(request);
   } catch (e) {
     return problemResponse(e);
   }

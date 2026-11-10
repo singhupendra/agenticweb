@@ -16,6 +16,11 @@ export const EnvSchema = z
     AUTH_JWKS_URI: z.string().url().optional(),
     /** In-process mock issuer for local dev/tests. Refused in production. */
     MOCK_ISSUER_ENABLED: bool.default(false),
+    /** OIDC client id of this web app at the issuer (human sign-in, authorization-code + PKCE). Mock issuer default: `agenticweb-web`. */
+    OIDC_CLIENT_ID: z.string().min(1).optional(),
+    /** Only for confidential-client IdPs; PKCE public clients need none. Sent as client_secret_post. */
+    OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+    OIDC_SCOPES: z.string().min(1).default("openid profile email"),
     /** HMAC secret for human session cookies (>= 32 chars). Required in production. */
     SESSION_SECRET: z.string().min(32).optional(),
     /**

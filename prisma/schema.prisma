@@ -173,13 +173,3 @@ model ReplayEntry {
 
   @@index([expiresAt])
 }
-
-model LoginTransaction {
-  state        String   @id
-  nonce        String
-  codeVerifier String
-  returnTo     String
-  expiresAt    DateTime @db.Timestamptz
-
-  @@index([expiresAt])
-}

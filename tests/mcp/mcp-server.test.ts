@@ -357,6 +357,15 @@ describe("hardening", () => {
     expect(r.isError).toBe(true);
     expect(textJson(r)).toMatchObject({ code: "timeout", status: 504 });
   });
+  it("aborts the in-flight call via AbortSignal when the timeout fires, and reports a timeout problem", async () => {
+    const rt = testRuntime();
+    let aborted = false;
+    rt.executor.invoke = (_n, _a, _i, o) => new Promise((_, reject) => { o!.signal!.addEventListener("abort", () => { aborted = true; reject(o!.signal!.reason); }); });
+    const s = await start({ timeoutMs: 30 }, rt);
+    const r = await (await s.connect()).callTool({ name: "get_organization", arguments: { orgSlug: "acme" } });
+    expect(aborted).toBe(true);
+    expect(textJson(r)).toMatchObject({ code: "timeout", status: 504 });
+  });
   it("rejects foreign Origins (DNS rebinding) and allows same-origin / no Origin", async () => {
     const s = await start();
     const body = { jsonrpc: "2.0", id: 1, method: "tools/list" };

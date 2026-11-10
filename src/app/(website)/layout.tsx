@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AuthNav } from "@/app/components/auth-nav";
 import { WebMcpClient } from "@/app/components/webmcp-client";
 
 export default function WebsiteLayout({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,8 @@ export default function WebsiteLayout({ children }: { children: React.ReactNode 
             <ul className="flex gap-5 text-sm">
               <li><Link className="underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/">Home</Link></li>
               <li><Link className="underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/services">Services</Link></li>
+              <li><Link className="underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" href="/bookings">My bookings</Link></li>
+              <li><AuthNav /></li>
             </ul>
           </nav>
         </div>

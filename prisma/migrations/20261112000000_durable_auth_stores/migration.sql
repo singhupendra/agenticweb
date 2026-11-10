@@ -46,14 +46,3 @@ CREATE TABLE "ReplayEntry" (
   CONSTRAINT "ReplayEntry_pkey" PRIMARY KEY ("id")
 );
 CREATE INDEX "ReplayEntry_expiresAt_idx" ON "ReplayEntry"("expiresAt");
-
--- OIDC login transactions (state/nonce/PKCE verifier), single use, short lived.
-CREATE TABLE "LoginTransaction" (
-  "state"        TEXT        NOT NULL,
-  "nonce"        TEXT        NOT NULL,
-  "codeVerifier" TEXT        NOT NULL,
-  "returnTo"     TEXT        NOT NULL,
-  "expiresAt"    TIMESTAMPTZ NOT NULL,
-  CONSTRAINT "LoginTransaction_pkey" PRIMARY KEY ("state")
-);
-CREATE INDEX "LoginTransaction_expiresAt_idx" ON "LoginTransaction"("expiresAt");

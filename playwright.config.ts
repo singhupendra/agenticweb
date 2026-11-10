@@ -26,6 +26,6 @@ export default defineConfig({
     url: `${baseURL}/api/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: { DATABASE_URL: databaseUrl, DEV_AUTH_ENABLED: "true", APP_URL: baseURL, NODE_ENV: "development", LOG_LEVEL: "error" },
+    env: { DATABASE_URL: databaseUrl, DEV_AUTH_ENABLED: "true", MOCK_ISSUER_ENABLED: "true", SESSION_SECRET: "e2e-only-session-secret-0123456789-abcdef", AUTH_STORES: "postgres", APP_URL: baseURL, NODE_ENV: "development", LOG_LEVEL: "error" },
   },
 });

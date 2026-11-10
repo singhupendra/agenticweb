@@ -46,6 +46,17 @@ describe("bookings.create", () => {
     expect(r.data).not.toHaveProperty("userId");
     expect(rt.bookingsRepo.bookings[0]?.userId).toBe(user.userId);
   });
+  it("every booking output carries the slot start time (create, get, list, update, cancel)", async () => {
+    const rt = testRuntime();
+    const start = SLOTS.one.startsAt.toISOString();
+    const made = await book(rt, user, SLOTS.one.id, 1);
+    const id = (made.data as { id: string }).id;
+    expect(made.data).toMatchObject({ slotStartsAt: start });
+    expect((await rt.executor.invoke("bookings.get", user, { orgSlug: "acme", bookingId: id })).data).toMatchObject({ slotStartsAt: start });
+    expect(((await rt.executor.invoke("bookings.list", user, { orgSlug: "acme" })).data as unknown[])[0]).toMatchObject({ slotStartsAt: start });
+    expect((await rt.executor.invoke("bookings.update", user, { orgSlug: "acme", bookingId: id, notes: "n" }, { idempotencyKey: "upd-key-0001" })).data).toMatchObject({ slotStartsAt: start });
+    expect((await rt.executor.invoke("bookings.cancel", user, { orgSlug: "acme", bookingId: id }, { idempotencyKey: "cancel-key-001" })).data).toMatchObject({ slotStartsAt: start });
+  });
   it("never accepts userId/status from input", async () => {
     const rt = testRuntime();
     await expect(book(rt, user, SLOTS.one.id, 1, { userId: user2.userId })).rejects.toMatchObject({ code: "validation_failed" });

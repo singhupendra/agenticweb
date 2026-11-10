@@ -44,6 +44,20 @@ describe.skipIf(!url)("bookings against Postgres", () => {
     serviceId = (await db.service.create({ data: { organizationId: orgId, slug: "svc", name: "Svc", description: "d", durationMinutes: 60, priceMinor: 100, currency: "INR" } })).id;
   });
 
+  it("booking outputs expose the slot start time exactly as stored (create → get → list → cancel)", async () => {
+    const rt = runtime();
+    const slotId = await makeSlot({ startsInMs: 48 * H });
+    const startsAt = (await db.slot.findUniqueOrThrow({ where: { id: slotId } })).startsAt.toISOString();
+    const u = await makeUser();
+    const made = await rt.executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId }, { idempotencyKey: key() });
+    const id = (made.data as { id: string }).id;
+    expect(made.data).toMatchObject({ slotStartsAt: startsAt });
+    expect((await rt.executor.invoke("bookings.get", actorOf(u), { orgSlug: "acme", bookingId: id })).data).toMatchObject({ slotStartsAt: startsAt });
+    expect(((await rt.executor.invoke("bookings.list", actorOf(u), { orgSlug: "acme" })).data as unknown[])[0]).toMatchObject({ slotStartsAt: startsAt });
+    expect((await rt.executor.invoke("bookings.update", actorOf(u), { orgSlug: "acme", bookingId: id, notes: "x" }, { idempotencyKey: key() })).data).toMatchObject({ slotStartsAt: startsAt });
+    expect((await rt.executor.invoke("bookings.cancel", actorOf(u), { orgSlug: "acme", bookingId: id }, { idempotencyKey: key() })).data).toMatchObject({ slotStartsAt: startsAt });
+  });
+
   it("never overbooks a capacity-1 slot under concurrency (10 racers → exactly 1 winner)", async () => {
     const rt = runtime();
     const slotId = await makeSlot({ capacity: 1 });

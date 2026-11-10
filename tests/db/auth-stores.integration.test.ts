@@ -1,6 +1,6 @@
 /**
  * Durable auth/security stores against a REAL Postgres (skipped unless DATABASE_URL_TEST is set; migrations applied).
- * Touches only its own tables (AgentGrant, AgentConfirmation, RateLimitWindow, ReplayEntry, LoginTransaction).
+ * Touches only its own tables (AgentGrant, AgentConfirmation, RateLimitWindow, ReplayEntry).
  */
 import { randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";

@@ -43,6 +43,7 @@ export default async function BookingPage({ params }: { params: Promise<{ bookin
       </p>
       <dl className="mt-6 space-y-3 text-sm">
         <div><dt className="text-zinc-600">Service</dt><dd className="font-medium">{service?.name ?? "Consulting session"}</dd></div>
+        <div><dt className="text-zinc-600">Session starts</dt><dd data-testid="booking-starts" className="font-medium">{formatSlotStart(booking.slotStartsAt, org.timezone)}</dd></div>
         <div><dt className="text-zinc-600">Reference</dt><dd className="break-all font-mono">{booking.id}</dd></div>
         <div><dt className="text-zinc-600">Booked on</dt><dd>{formatSlotStart(booking.createdAt, org.timezone)}</dd></div>
         {booking.notes ? <div><dt className="text-zinc-600">Notes</dt><dd className="whitespace-pre-wrap">{booking.notes}</dd></div> : null}

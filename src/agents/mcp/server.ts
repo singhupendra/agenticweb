@@ -20,7 +20,8 @@ import { actorSubject } from "@/core/auth";
 import { registry as defaultRegistry } from "@/capabilities";
 import { CONFIRMATION_ID_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
 import type { Runtime } from "@/runtime";
-import { sanitizeUntrusted } from "./sanitize";
+import { z } from "zod";
+import { sanitizeBySchema, sanitizeUntrusted } from "./sanitize";
 import { CONFIRMATION_HEADER, type AgentConfirmationGate } from "@/agents/policies";
 
 export const MCP_SERVER_INFO = { name: "agenticweb", version: "1.0.0" } as const;
@@ -118,27 +119,33 @@ export function createMcpHandler(deps: McpDeps) {
         if (!(err instanceof AppError)) logger.error("mcp tool unexpected error", { error: err, requestId, tool: cap.mcp.toolName });
         const approval = err instanceof AppError ? err.headers?.[CONFIRMATION_HEADER] : undefined;
         const origin = new URL(deps.appUrl()).origin;
-        const problem = sanitizeUntrusted<ProblemDetails & { confirmationId?: string; approveUrl?: string; approvalUrl?: string }>({
-          ...toProblem(err, { requestId, instance }),
+        const base = toProblem(err, { requestId, instance });
+        // Only prose fields are sanitised; code/status/type/ids/urls are server-generated and must stay exact.
+        const problem: ProblemDetails & { confirmationId?: string; approveUrl?: string; approvalUrl?: string } = {
+          ...base,
+          ...(base.detail !== undefined ? { detail: sanitizeUntrusted(base.detail) } : {}),
+          ...(base.errors ? { errors: base.errors.map((i) => ({ ...i, message: sanitizeUntrusted(i.message) })) } : {}),
           ...(approval ? { confirmationId: approval, approveUrl: `${origin}/api/confirmations/${approval}/approve`, approvalUrl: `${origin}/approvals/${approval}` } : {}),
-        });
+        };
         finish("error", problem.code);
         return { isError: true, content: [{ type: "text", text: JSON.stringify(problem) }], _meta: { [UNTRUSTED_META]: true } };
       };
 
       const { [IDEMPOTENCY_ARG]: idempotencyKey, [CONFIRMATION_ID_ARG]: confirmationId, ...args } = (req.params.arguments ?? {}) as Record<string, unknown>;
+      const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         // Every write needs the human's out-of-band approval, bound to (actor, tool, args hash, expiry) and single-use.
         // The model cannot supply it: approval happens in the human's own browser session (/approvals/<id>).
         await deps.gate().check(actor, cap, args, typeof confirmationId === "string" ? confirmationId : null, { all: true });
+        const timeout = new AppError("timeout", `Tool did not finish within ${timeoutMs} ms. If this was a write, retry with the SAME idempotencyKey.`);
         const envelope = await Promise.race([
-          deps.runtime().executor.invoke(cap.name, actor, args, { requestId, idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined }),
+          deps.runtime().executor.invoke(cap.name, actor, args, { requestId, idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : undefined, signal: controller.signal }),
           new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new AppError("timeout", `Tool did not finish within ${timeoutMs} ms. If this was a write, retry with the SAME idempotencyKey.`)), timeoutMs);
+            timer = setTimeout(() => { controller.abort(timeout); reject(timeout); }, timeoutMs); // abort first so cancellable work stops
           }),
         ]);
-        const data = sanitizeUntrusted(structuredFrom(envelope));
+        const data = sanitizeBySchema(structuredFrom(envelope), outputSchemaOf(cap));
         finish("success");
         return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data as Record<string, unknown>, _meta: { [UNTRUSTED_META]: true, requestId } };
       } catch (e) {
@@ -210,6 +217,13 @@ export function createMcpHandler(deps: McpDeps) {
       return problemHttp(e instanceof AppError ? e : new AppError("internal"), instance, requestId);
     }
   };
+}
+
+const outputSchemas = new WeakMap<object, unknown>();
+/** The capability's declared output as JSON Schema (same source as `outputSchema` in tools/list); cached per capability. */
+function outputSchemaOf(cap: { output: z.ZodType }): unknown {
+  if (!outputSchemas.has(cap)) outputSchemas.set(cap, z.toJSONSchema(cap.output, { io: "output" }));
+  return outputSchemas.get(cap);
 }
 
 /** Same shape as REST `data`, rebuilt as the capability's declared output object (paginated results regain their page fields). */

@@ -36,7 +36,7 @@ export class InMemoryBookingRepository implements BookingRepository {
     if (active.some((b) => b.userId === q.userId)) return { ok: false, reason: "duplicate" };
     if (active.length >= s.capacity) return { ok: false, reason: "full" };
     const booking: BookingRecord = {
-      id: randomUUID(), slotId: s.id, serviceId: s.serviceId, status: "confirmed", notes: q.notes ?? null,
+      id: randomUUID(), slotId: s.id, serviceId: s.serviceId, slotStartsAt: s.startsAt.toISOString(), status: "confirmed", notes: q.notes ?? null,
       createdAt: q.now.toISOString(), userId: q.userId, organizationId: q.organizationId,
     };
     this.bookings.push(booking);

@@ -57,6 +57,11 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
 | 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
 | 4 | Remote MCP server `/mcp` (Streamable HTTP, stateless), tools derived from registry, `update_booking` exposed, confirm+idempotency on writes, sanitised output, 401 challenge, timeout, hooks | Agent Integration | done (rebased on Security PR #5: audience-bound bearer, 401 challenge, confirmation gate, shared rate limits) | `tests/mcp/*`, `docs/mcp-integration.md`, see "MCP verification" |
+| 4/3 | **Hardening:** human-bound single-use MCP write confirmation (no model-asserted `confirm`), approval REST + `/approvals/[id]` UI | Hardening | done | `tests/mcp/mcp-server.test.ts`, `tests/confirmations-http.test.ts`, e2e `auth-and-approvals`; see "Hardening verification" |
+| 3 | **Hardening:** Postgres GrantStore / ConfirmationStore / RateLimitStore / ReplayGuard (+ migration, `AUTH_STORES`) | Hardening | done | `tests/db/auth-stores.integration.test.ts` (15, real PG) |
+| 3 | **Hardening:** OIDC authorization-code + PKCE login/callback/session/logout, mock IdP | Hardening | done | `tests/oidc-login.test.ts` (45), e2e |
+| 4 | **Hardening:** schema-driven MCP sanitiser (free text only), AbortSignal timeout | Hardening | done | `tests/mcp/sanitize.test.ts`, `tests/executor-abort.test.ts` |
+| 2 | **Hardening:** `slotStartsAt` on booking outputs; `/bookings` "my bookings" page | Hardening | done | `tests/bookings.test.ts`, `tests/db/bookings.integration.test.ts`, e2e |
 | 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
@@ -228,3 +233,35 @@ Shared-file edits (additive): `McpBinding.destructive`, `ERROR_CODES.timeout` (5
 Rebased on Security PR #5 (95f0fc2): route uses `resolveActor(request,{resource:"mcp"})`, `decorateAuthError`, `getAgentGate()` (agent writes → `confirmation_required` + `confirmationId`/`approveUrl`, retry with `confirmationId`), shared REST rate-limit buckets (`defaultRateLimiting` now exported). Re-verified after rebase: lint clean, `tsc --noEmit` clean, `pnpm test:run` → 22 files passed | 1 skipped; 379 passed | 13 skipped (392).
 Live with mock issuer (`next dev`, seeded Postgres, SDK client + bearer): MCP-audience agent token lists 9 tools; REST-audience token on `/mcp` → 401 `invalid_token` + `resource_metadata`; create_booking → 428 `confirmation_required` + approveUrl; user bearer approves (200); retry with `confirmationId` → `confirmed`; cancel_booking → `confirmation_required`.
 **Gaps:** `confirm=true` is model-asserted (the gate is the hard control, and applies to agents only); OTel is a hook only (`McpDeps.metrics`; DevOps helpers not merged); `claude mcp add` commands not executed against a local Claude config; no stdio/SSE transport, no session resumability (stateless by design); in-memory confirmation/rate-limit stores are per-instance (Security's note).
+
+## Hardening verification (Node 24.15.0, Postgres 16 on an isolated throwaway cluster :55439, DBs `agenticweb_hard_test` / `agenticweb_hard_e2e` — never the dev DB), 2026-11-10
+
+```
+$ pnpm lint
+> agenticweb@0.1.0 lint /Users/upendrasingh/.ao/data/worktrees/agenticweb/agenticweb-9
+> eslint .
+
+(exit 0)
+$ pnpm tsc --noEmit
+(exit 0)
+$ pnpm test:run   # no DATABASE_URL_TEST
+ Test Files  25 passed | 2 skipped (27)
+      Tests  449 passed | 29 skipped (478)
+$ DATABASE_URL_TEST=…/agenticweb_hard_test pnpm test:run
+ Test Files  27 passed (27)
+      Tests  478 passed (478)
+$ pnpm build
+✓ Compiled successfully in 638ms
+  Finished TypeScript in 1140ms ...
+(exit 0; routes incl. ƒ /approvals/[id], ƒ /bookings, ƒ /api/auth/{login,callback,session,logout}, ƒ /api/confirmations/[id]{,/approve,/decline})
+$ E2E_DATABASE_URL=…/agenticweb_hard_e2e pnpm test:e2e
+  43 passed, 1 skipped (desktop + Pixel 5; incl. 10 new: OIDC sign-in → my bookings → sign-out, returnTo open-redirect, forged callback, MCP write held → human approves on /approvals/<id> → single use, decline)
+```
+
+New suites: `tests/oidc-login.test.ts` (45), `tests/confirmations-http.test.ts` (9), `tests/executor-abort.test.ts` (3), `tests/db/auth-stores.integration.test.ts` (15), schema-aware sanitiser (+4), MCP confirmation tests rewritten (`confirm` removed; any-actor gating, self-approval, decline, cross-user spend), `AppError` cross-copy identity (+2).
+
+Mutation checks (each break made ≥1 test fail; 13/13 caught): MCP gate for all actors (5 tests), owner-only approve, confirmation single-use, OIDC `state`, OIDC `nonce`, `returnTo` guard, logout CSRF, atomic rate-limit increment (PG), conditional replay upsert (PG), grant revocation (PG), sanitiser leaves ids alone, executor abort-before-execute, `AppError` brand.
+
+Found by the e2e run, not by unit tests: Next dev loads one copy of `@/core/errors` per route, and the gate singleton on `globalThis` throws `AppError`s from whichever copy created it, so `instanceof AppError` failed and a 428 became a 500. Fixed with a `Symbol.for` brand in `AppError` (regression test).
+
+**Gaps / not verified:** no end-user consent/revocation UI for grants; no RP-initiated logout at the IdP; the ID token must carry `org_id` (no claim-mapping step); only the mock issuer was exercised (not a real OIDC provider); confirmation global cap is soft under heavy concurrency; Prisma statements are not individually cancellable (abort stops work before it starts, not mid-query); approval page relies on Next's same-origin server-action check rather than a custom CSRF token; CI does not run Playwright yet.
