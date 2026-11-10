@@ -13,8 +13,8 @@ Dockerfile
 docker-compose*.yml
 .dockerignore
 docs
+# NOT ignored: tests/ and evals/ — `next build` type-checks every file in tsconfig (evals/ imports tests/agentic/support)
 specs
-tests
 deploy
 *.md
 src/generated
