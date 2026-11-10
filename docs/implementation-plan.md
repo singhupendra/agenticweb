@@ -59,7 +59,7 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 4 | Remote MCP server `/mcp` (Streamable HTTP, stateless), tools derived from registry, `update_booking` exposed, confirm+idempotency on writes, sanitised output, 401 challenge, timeout, hooks | Agent Integration | done (rebased on Security PR #5: audience-bound bearer, 401 challenge, confirmation gate, shared rate limits) | `tests/mcp/*`, `docs/mcp-integration.md`, see "MCP verification" |
 | 4/3 | **Hardening:** human-bound single-use MCP write confirmation (no model-asserted `confirm`), approval REST + `/approvals/[id]` UI | Hardening | done | `tests/mcp/mcp-server.test.ts`, `tests/confirmations-http.test.ts`, e2e `auth-and-approvals`; see "Hardening verification" |
 | 3 | **Hardening:** Postgres GrantStore / ConfirmationStore / RateLimitStore / ReplayGuard (+ migration, `AUTH_STORES`) | Hardening | done | `tests/db/auth-stores.integration.test.ts` (15, real PG) |
-| 3 | **Hardening:** OIDC authorization-code + PKCE login/callback/session/logout, mock IdP | Hardening | done | `tests/oidc-login.test.ts` (45), e2e |
+| 3 | **Hardening:** OIDC authorization-code + PKCE login/callback/session/logout, mock IdP | Hardening | done | `tests/oidc-login.test.ts` (53), e2e |
 | 4 | **Hardening:** schema-driven MCP sanitiser (free text only), AbortSignal timeout | Hardening | done | `tests/mcp/sanitize.test.ts`, `tests/executor-abort.test.ts` |
 | 2 | **Hardening:** `slotStartsAt` on booking outputs; `/bookings` "my bookings" page | Hardening | done | `tests/bookings.test.ts`, `tests/db/bookings.integration.test.ts`, e2e |
 | 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
@@ -246,10 +246,10 @@ $ pnpm tsc --noEmit
 (exit 0)
 $ pnpm test:run   # no DATABASE_URL_TEST
  Test Files  25 passed | 2 skipped (27)
-      Tests  449 passed | 29 skipped (478)
+      Tests  457 passed | 29 skipped (486)
 $ DATABASE_URL_TEST=…/agenticweb_hard_test pnpm test:run
  Test Files  27 passed (27)
-      Tests  478 passed (478)
+      Tests  486 passed (486)
 $ pnpm build
 ✓ Compiled successfully in 638ms
   Finished TypeScript in 1140ms ...
@@ -258,7 +258,7 @@ $ E2E_DATABASE_URL=…/agenticweb_hard_e2e pnpm test:e2e
   43 passed, 1 skipped (desktop + Pixel 5; incl. 10 new: OIDC sign-in → my bookings → sign-out, returnTo open-redirect, forged callback, MCP write held → human approves on /approvals/<id> → single use, decline)
 ```
 
-New suites: `tests/oidc-login.test.ts` (45), `tests/confirmations-http.test.ts` (9), `tests/executor-abort.test.ts` (3), `tests/db/auth-stores.integration.test.ts` (15), schema-aware sanitiser (+4), MCP confirmation tests rewritten (`confirm` removed; any-actor gating, self-approval, decline, cross-user spend), `AppError` cross-copy identity (+2).
+New suites: `tests/oidc-login.test.ts` (53), `tests/confirmations-http.test.ts` (9), `tests/executor-abort.test.ts` (3), `tests/db/auth-stores.integration.test.ts` (15), schema-aware sanitiser (+4), MCP confirmation tests rewritten (`confirm` removed; any-actor gating, self-approval, decline, cross-user spend), `AppError` cross-copy identity (+2).
 
 Mutation checks (each break made ≥1 test fail; 13/13 caught): MCP gate for all actors (5 tests), owner-only approve, confirmation single-use, OIDC `state`, OIDC `nonce`, `returnTo` guard, logout CSRF, atomic rate-limit increment (PG), conditional replay upsert (PG), grant revocation (PG), sanitiser leaves ids alone, executor abort-before-execute, `AppError` brand.
 

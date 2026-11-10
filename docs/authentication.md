@@ -53,7 +53,7 @@ Agent tokens: lifetime capped at 1 h (`exp - iat`), `delegation.expiresAt = exp`
 
 **Config:** `AUTH_ISSUER`, `OIDC_CLIENT_ID` (required for real issuers; defaults to `agenticweb-web` for the mock), optional `OIDC_CLIENT_SECRET`, `OIDC_SCOPES` (default `openid profile email`), `SESSION_SECRET`. Sign-in is a 404 when not configured.
 
-**Local demo (no IdP, no network):** `MOCK_ISSUER_ENABLED=true`, `SESSION_SECRET=<32+ chars>`, `pnpm db:deploy && pnpm db:seed && pnpm dev`, open `/bookings` → *Sign in* → the mock IdP page (`/api/dev/mock-issuer/authorize`) → pick *Demo customer* / *Demo admin* → back on `/bookings` with a session cookie. The mock (`core/auth/mock-oidc.ts`) enforces PKCE S256, exact redirect_uri, single-use 60 s codes, and is refused in production. Tests: `tests/oidc-login.test.ts` (45), `tests/e2e/auth-and-approvals.spec.ts`.
+**Local demo (no IdP, no network):** `MOCK_ISSUER_ENABLED=true`, `SESSION_SECRET=<32+ chars>`, `pnpm db:deploy && pnpm db:seed && pnpm dev`, open `/bookings` → *Sign in* → the mock IdP page (`/api/dev/mock-issuer/authorize`) → pick *Demo customer* / *Demo admin* → back on `/bookings` with a session cookie. The mock (`core/auth/mock-oidc.ts`) enforces PKCE S256, exact redirect_uri, single-use 60 s codes, and is refused in production. Tests: `tests/oidc-login.test.ts` (53), `tests/e2e/auth-and-approvals.spec.ts`.
 
 ## Agent delegation & human confirmation
 Delegation = user-consented grant (`grantId`, scopes ⊆ `SCOPES`, expiry). Effective permission = scopes ∩ the delegating user's rights ∩ capability requirement (see `authorization.md`).
