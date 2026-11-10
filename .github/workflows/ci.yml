@@ -80,7 +80,16 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm db:deploy && pnpm db:seed
           pnpm exec playwright install --with-deps chromium
-          pnpm test:e2e   # playwright.config.ts starts `next dev` (dev actor header needs non-production)
+          # Pre-warm `next dev` (cold on-demand route compilation can exceed Playwright's 5s expect timeout on the first
+          # booking POST). Same env as playwright.config.ts webServer; CI="" lets it reuse this server.
+          DATABASE_URL="$E2E_DATABASE_URL" DEV_AUTH_ENABLED=true APP_URL=http://localhost:3100 NODE_ENV=development LOG_LEVEL=error \
+            nohup pnpm exec next dev -p 3100 > next-dev.log 2>&1 &
+          for _ in $(seq 1 90); do curl -fs localhost:3100/api/health >/dev/null && break; sleep 1; done
+          for u in / /services/quick-consult /bookings/00000000-0000-4000-8000-000000000999 /robots.txt /sitemap.xml /llms.txt /openapi.json /docs; do
+            curl -s -o /dev/null "localhost:3100$u" || true
+          done
+          curl -s -o /dev/null -X POST -H 'content-type: application/json' -d '{}' localhost:3100/api/organizations/northwind-studio/bookings || true
+          CI="" pnpm test:e2e
       - if: steps.detect.outputs.present == 'true' && always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: playwright-report, path: "playwright-report/\ntest-results/", if-no-files-found: ignore, retention-days: 14 }
@@ -103,7 +112,7 @@ jobs:
         run: docker run --rm -v "$PWD/deploy/observability/otel-collector.yaml:/c.yaml:ro" otel/opentelemetry-collector-contrib:0.165.0 validate --config=/c.yaml
       - name: Grafana dashboard JSON
         run: |
-          for f in deploy/observability/grafana/dashboards/*.json; do jq -e '.panels | length > 0 and (.uid | length > 0)' "$f" >/dev/null && echo "ok $f"; done
+          for f in deploy/observability/grafana/dashboards/*.json; do jq -e '(.panels | length > 0) and (.uid | length > 0)' "$f" >/dev/null && echo "ok $f"; done
       - name: Compose files
         run: docker compose --profile app --profile observability config -q
 
