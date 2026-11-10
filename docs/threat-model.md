@@ -17,7 +17,7 @@ Status legend: **P1** = contract/mitigation exists in Phase 1 code; **Pn** = own
 | T2 | Tampering | Overbooking via race | all | Transactional capacity check + unique constraint | P2 |
 | T3 | Tampering | Tool args altered by prompt injection | MCP, WebMCP | Same validation and authorization as human requests; mutating tools need explicit scope + (WebMCP) user confirmation | P1 contract, P4/5 |
 | R1 | Repudiation | "I never booked that" / agent acted unexpectedly | all | Audit log records actor, `onBehalfOf`, grantId, capability, input hash, outcome, requestId for every mutation **and every denial** | P1 interface, P2 store |
-| I1 | Info disclosure | IDOR: reading/cancelling others' bookings by id | REST, MCP | Authorization receives the resource (owner id, org id); ownership checked in the policy, not in routes; non-owner gets 404, not 403. Tests: `authz-matrix` (78 cells), `auth-http` | P3 mitigated |
+| I1 | Info disclosure | IDOR: reading/cancelling others' bookings by id | REST, MCP | Authorization receives the resource (owner id, org id); ownership checked in the policy, not in routes; non-owner gets 404, not 403. Tests: `authz-matrix` (91 cells), `auth-http` | P3 mitigated |
 | I2 | Info disclosure | Verbose errors/stack traces/SQL | all | problem+json with stable codes; internals logged, never returned; 500 detail is generic | P1 |
 | I3 | Info disclosure | PII in logs / tool output | all | Logger redaction list; MCP outputs use the public output schema (Zod `.parse` strips extras) | P1 |
 | I4 | Info disclosure | Cross-tenant leakage | all | `organizationId` in every query via module repositories | P2 |

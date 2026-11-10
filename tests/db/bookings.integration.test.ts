@@ -218,4 +218,36 @@ describe.skipIf(!url)("bookings against Postgres", () => {
     const other = await makeSlot();
     await expect(rt.executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId: other }, { idempotencyKey: key() })).rejects.toMatchObject({ code: "not_found" });
   });
+  it("REST v1 additions: service filter/sort, slot sort, booking status filter/sort, notes update vs cancel", async () => {
+    const rt = runtime();
+    const mk = (slug: string, name: string, priceMinor: number) =>
+      db.service.create({ data: { organizationId: orgId, slug, name, description: "d", durationMinutes: 30, priceMinor, currency: "INR" } });
+    await mk("cheap", "Cheap Chat", 10);
+    await mk("pricey", "Pricey Workshop", 9000);
+    const names = async (input: object) =>
+      ((await rt.executor.invoke("services.list", ANONYMOUS, { orgSlug: "acme", ...input })).data as { slug: string }[]).map((x) => x.slug);
+    expect(await names({ sort: "-priceMinor" })).toEqual(["pricey", "svc", "cheap"]);
+    expect(await names({ sort: "priceMinor", maxPriceMinor: 100 })).toEqual(["cheap", "svc"]);
+    expect(await names({ q: "WORKSHOP" })).toEqual(["pricey"]);
+
+    const early = await makeSlot({ startsInMs: 24 * H });
+    const late = await makeSlot({ startsInMs: 48 * H, capacity: 2 });
+    const asc = (await rt.executor.invoke("slots.list", ANONYMOUS, { orgSlug: "acme", serviceSlug: "svc" })).data as { id: string }[];
+    const desc = (await rt.executor.invoke("slots.list", ANONYMOUS, { orgSlug: "acme", serviceSlug: "svc", sort: "-startsAt" })).data as { id: string }[];
+    expect(asc.map((x) => x.id)).toEqual([early, late]);
+    expect(desc.map((x) => x.id)).toEqual([late, early]);
+
+    const u = await makeUser();
+    const a = (await rt.executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId: early, notes: "n" }, { idempotencyKey: key() })).data as { id: string };
+    await rt.executor.invoke("bookings.create", actorOf(u), { orgSlug: "acme", slotId: late }, { idempotencyKey: key() });
+    const upd = await rt.executor.invoke("bookings.update", actorOf(u), { orgSlug: "acme", bookingId: a.id, notes: "changed" }, { idempotencyKey: key() });
+    expect(upd.data).toMatchObject({ notes: "changed", status: "confirmed" });
+    await rt.executor.invoke("bookings.cancel", actorOf(u), { orgSlug: "acme", bookingId: a.id }, { idempotencyKey: key() });
+    await expect(rt.executor.invoke("bookings.update", actorOf(u), { orgSlug: "acme", bookingId: a.id, notes: "late" }, { idempotencyKey: key() })).rejects.toMatchObject({ code: "conflict" });
+    expect((await db.booking.findUniqueOrThrow({ where: { id: a.id } })).notes).toBe("changed");
+    const cancelled = (await rt.executor.invoke("bookings.list", actorOf(u), { orgSlug: "acme", status: "cancelled" })).data as { id: string }[];
+    expect(cancelled.map((x) => x.id)).toEqual([a.id]);
+    const oldest = (await rt.executor.invoke("bookings.list", actorOf(u), { orgSlug: "acme", sort: "createdAt" })).data as { id: string }[];
+    expect(oldest[0]?.id).toBe(a.id);
+  });
 });

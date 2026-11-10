@@ -1,7 +1,7 @@
 import { conflict, notFound, type Paginated } from "@/core/errors";
 import type { OrganizationService } from "@/modules/organization/service";
 import type { ServiceCatalog } from "@/modules/services/service";
-import type { Booking, Slot } from "./schemas";
+import type { Booking, BookingSort, BookingStatus, Slot, SlotSort } from "./schemas";
 
 /** Booking as stored: includes owner + tenant, which public output schemas strip. */
 export interface BookingRecord extends Booking {
@@ -16,23 +16,33 @@ export type CancelResult =
   | { ok: true; booking: BookingRecord }
   | { ok: false; reason: "not_found" | "started" };
 
+export type UpdateResult =
+  | { ok: true; booking: BookingRecord }
+  | { ok: false; reason: "not_found" | "cancelled" };
+
 export interface BookingRepository {
   listAvailableSlots(q: {
-    organizationId: string; serviceId: string; now: Date; from?: Date; to?: Date; offset: number; limit: number;
+    organizationId: string; serviceId: string; now: Date; from?: Date; to?: Date; sort?: SlotSort; offset: number; limit: number;
   }): Promise<{ items: Slot[]; total: number }>;
   /** MUST be atomic: capacity is never exceeded under concurrency. */
   reserve(q: { organizationId: string; userId: string; slotId: string; notes?: string; now: Date }): Promise<ReserveResult>;
   findById(organizationId: string, bookingId: string): Promise<BookingRecord | null>;
-  listByUser(organizationId: string, userId: string, page: { offset: number; limit: number }): Promise<{ items: BookingRecord[]; total: number }>;
+  listByUser(
+    organizationId: string, userId: string,
+    page: { offset: number; limit: number; status?: BookingStatus; sort?: BookingSort },
+  ): Promise<{ items: BookingRecord[]; total: number }>;
+  /** Only `notes` may change; cancelled bookings are immutable. */
+  updateNotes(q: { organizationId: string; bookingId: string; notes: string | null }): Promise<UpdateResult>;
   cancel(q: { organizationId: string; bookingId: string; now: Date }): Promise<CancelResult>;
 }
 
 /** Contract used by capabilities. Identity (userId) always comes from the Actor, never from input. */
 export interface BookingsService {
-  listSlots(q: { orgSlug: string; serviceSlug: string; from?: string; to?: string; page: number; pageSize: number; now: Date }): Promise<Paginated<Slot>>;
+  listSlots(q: { orgSlug: string; serviceSlug: string; from?: string; to?: string; sort?: SlotSort; page: number; pageSize: number; now: Date }): Promise<Paginated<Slot>>;
   create(q: { orgSlug: string; userId: string; slotId: string; notes?: string; now: Date }): Promise<BookingRecord>;
   get(orgSlug: string, bookingId: string): Promise<BookingRecord>;
-  listMine(q: { orgSlug: string; userId: string; page: number; pageSize: number }): Promise<Paginated<BookingRecord>>;
+  listMine(q: { orgSlug: string; userId: string; status?: BookingStatus; sort?: BookingSort; page: number; pageSize: number }): Promise<Paginated<BookingRecord>>;
+  updateNotes(q: { orgSlug: string; bookingId: string; notes: string | null }): Promise<BookingRecord>;
   cancel(q: { orgSlug: string; bookingId: string; now: Date }): Promise<BookingRecord>;
 }
 
@@ -46,7 +56,7 @@ export function createBookingsService(deps: {
       const org = await deps.organizations.getBySlug(q.orgSlug);
       const svc = await deps.catalog.get(q.orgSlug, q.serviceSlug);
       const { items, total } = await deps.repo.listAvailableSlots({
-        organizationId: org.id, serviceId: svc.id, now: q.now,
+        organizationId: org.id, serviceId: svc.id, now: q.now, sort: q.sort,
         from: q.from ? new Date(q.from) : undefined, to: q.to ? new Date(q.to) : undefined,
         offset: (q.page - 1) * q.pageSize, limit: q.pageSize,
       });
@@ -71,8 +81,15 @@ export function createBookingsService(deps: {
     },
     async listMine(q) {
       const org = await deps.organizations.getBySlug(q.orgSlug);
-      const { items, total } = await deps.repo.listByUser(org.id, q.userId, { offset: (q.page - 1) * q.pageSize, limit: q.pageSize });
+      const { items, total } = await deps.repo.listByUser(org.id, q.userId, { offset: (q.page - 1) * q.pageSize, limit: q.pageSize, status: q.status, sort: q.sort });
       return { items, page: q.page, pageSize: q.pageSize, total };
+    },
+    async updateNotes(q) {
+      const org = await deps.organizations.getBySlug(q.orgSlug);
+      const r = await deps.repo.updateNotes({ organizationId: org.id, bookingId: q.bookingId, notes: q.notes });
+      if (r.ok) return r.booking;
+      if (r.reason === "cancelled") throw conflict("Cancelled bookings cannot be modified.");
+      throw notFound("Booking");
     },
     async cancel(q) {
       const org = await deps.organizations.getBySlug(q.orgSlug);

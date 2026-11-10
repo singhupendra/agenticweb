@@ -1,6 +1,6 @@
 /** End-to-end through the REST adapter: token/cookie → resolveActor → gate → executor → problem+json. */
 import { beforeEach, describe, expect, it } from "vitest";
-import { createRestHandler, type RestDeps } from "@/api/rest";
+import { createRestHandler, createRestRateLimiting, type RestDeps } from "@/api/rest";
 import { AgentConfirmationGate, CONFIRMATION_HEADER } from "@/agents/policies";
 import { InMemoryRateLimitStore, createRateLimiter } from "@/core/security";
 import { APP_URL, REST_AUD, authKit, bearer, clock } from "./fixtures/auth";
@@ -177,7 +177,7 @@ describe("rate limits and request-size limits", () => {
   it("429 + Retry-After per subject, other subjects unaffected", async () => {
     const limiter = createRateLimiter({ store: new InMemoryRateLimitStore(), limit: 2, windowMs: 60_000, now: () => 1 });
     const t = bearer(await userTok());
-    const d = { limiter: () => limiter };
+    const d = createRestRateLimiting({ limiter, anonLimit: () => 60, trustProxy: () => false });
     expect((await call("bookings.list", t, { deps: d })).status).toBe(200);
     expect((await call("bookings.list", t, { deps: d })).status).toBe(200);
     const r = await call("bookings.list", t, { deps: d });
@@ -187,13 +187,13 @@ describe("rate limits and request-size limits", () => {
   });
   it("failed authentication attempts also consume the client's budget", async () => {
     const limiter = createRateLimiter({ store: new InMemoryRateLimitStore(), limit: 2, windowMs: 60_000, now: () => 1 });
-    const d = { limiter: () => limiter, anonLimit: () => 2 };
+    const d = createRestRateLimiting({ limiter, anonLimit: () => 2, trustProxy: () => false });
     for (let i = 0; i < 2; i++) expect((await call("bookings.list", bearer("a.b.c"), { deps: d })).status).toBe(401);
     expect((await call("bookings.list", bearer("a.b.c"), { deps: d })).status).toBe(429);
   });
   it("failed-auth floods use their own bucket: legitimate anonymous callers are not locked out", async () => {
     const limiter = createRateLimiter({ store: new InMemoryRateLimitStore(), limit: 2, windowMs: 60_000, now: () => 1 });
-    const d = { limiter: () => limiter, anonLimit: () => 2 };
+    const d = createRestRateLimiting({ limiter, anonLimit: () => 2, trustProxy: () => false });
     for (let i = 0; i < 3; i++) await call("bookings.list", bearer("a.b.c"), { deps: d });
     expect((await call("services.list", {}, { deps: d })).status).toBe(200);
   });

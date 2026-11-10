@@ -22,6 +22,8 @@ export interface HttpBinding {
   /** Next-style OpenAPI path template, e.g. `/api/organizations/{orgSlug}/services`. `{param}` values feed `input`. */
   path: string;
   successStatus?: number;
+  /** Public reads only: `Cache-Control: public, max-age=N` (default 60). Volatile data (availability) uses a small value. */
+  cacheSeconds?: number;
 }
 
 export interface McpBinding {
@@ -43,6 +45,8 @@ export interface Capability<I extends z.ZodType = z.ZodType, O extends z.ZodType
   /** true → requires idempotency key, always audited, never exposed as GET. */
   mutating: boolean;
   http: HttpBinding;
+  /** Additional REST spellings of the same behaviour (e.g. `DELETE` for cancel). Same method rules as `http`. */
+  httpAliases?: readonly HttpBinding[];
   mcp: McpBinding;
   /**
    * Fetch the authorization facts for the target (owner/org). Return null if it does not exist.

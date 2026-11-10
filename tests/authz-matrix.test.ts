@@ -8,13 +8,14 @@ import { capabilities } from "@/capabilities";
 import { SLOTS, USER2_ID, ORG_ID, admin, agent, outsider, testRuntime, user, user2 } from "./fixtures";
 
 type Out = "ok" | "unauthenticated" | "forbidden" | "not_found";
-const CAPS = ["services.list", "slots.list", "bookings.create", "bookings.list", "bookings.get", "bookings.cancel"] as const;
+const CAPS = ["services.list", "slots.list", "bookings.create", "bookings.list", "bookings.get", "bookings.update", "bookings.cancel"] as const;
 const ALL = ["services:read", "bookings:read", "bookings:write"] as const;
 const expired = agent([...ALL], { expiresAt: "2026-11-09T09:00:00.000Z" });
 const agentOf = (userId: string, scopes: readonly string[]): Actor => ({ ...agent([...ALL]), onBehalfOf: { userId, organizationId: ORG_ID }, delegation: { ...agent([]).delegation, scopes: scopes as never } });
 
 // Resource under test for get/cancel: a booking owned by USER_ID in ORG_ID.
-const ROWS: [string, Actor, Record<(typeof CAPS)[number], Out>][] = [
+type Row = Record<Exclude<(typeof CAPS)[number], "bookings.update">, Out>;
+const RAW_ROWS: [string, Actor, Row][] = [
   ["anonymous", ANONYMOUS, { "services.list": "ok", "slots.list": "ok", "bookings.create": "unauthenticated", "bookings.list": "unauthenticated", "bookings.get": "unauthenticated", "bookings.cancel": "unauthenticated" }],
   ["user (owner)", user, { "services.list": "ok", "slots.list": "ok", "bookings.create": "ok", "bookings.list": "ok", "bookings.get": "ok", "bookings.cancel": "ok" }],
   ["user (other owner, same org)", user2, { "services.list": "ok", "slots.list": "ok", "bookings.create": "ok", "bookings.list": "ok", "bookings.get": "not_found", "bookings.cancel": "not_found" }],
@@ -30,6 +31,9 @@ const ROWS: [string, Actor, Record<(typeof CAPS)[number], Out>][] = [
   ["agent delegated by an ADMIN user (still not admin)", agentOf(admin.userId, ALL), { "services.list": "ok", "slots.list": "ok", "bookings.create": "ok", "bookings.list": "ok", "bookings.get": "not_found", "bookings.cancel": "not_found" }],
 ];
 
+// bookings.update has the same requirement as bookings.cancel (owner-or-admin + bookings:write): same outcomes.
+const ROWS: [string, Actor, Record<(typeof CAPS)[number], Out>][] = RAW_ROWS.map(([l, a, r]) => [l, a, { ...r, "bookings.update": r["bookings.cancel"] }]);
+
 async function run(cap: (typeof CAPS)[number], actor: Actor): Promise<Out> {
   const rt = testRuntime();
   const made = await rt.executor.invoke("bookings.create", user, { orgSlug: "acme", slotId: SLOTS.one.id }, { idempotencyKey: "seed-key-0001" });
@@ -40,6 +44,7 @@ async function run(cap: (typeof CAPS)[number], actor: Actor): Promise<Out> {
     "bookings.create": { orgSlug: "acme", slotId: SLOTS.two.id },
     "bookings.list": { orgSlug: "acme" },
     "bookings.get": { orgSlug: "acme", bookingId },
+    "bookings.update": { orgSlug: "acme", bookingId, notes: "hello" },
     "bookings.cancel": { orgSlug: "acme", bookingId },
   } as const;
   try {

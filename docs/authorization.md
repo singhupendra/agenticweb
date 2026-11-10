@@ -11,7 +11,7 @@ Rules (in order):
 6. Agent-specific layers (`src/agents/policies`): per-action human confirmation for transactional scopes (see `authentication.md`).
 
 ## Matrix
-`tests/authz-matrix.test.ts` runs 13 actor profiles × 6 capabilities through the real executor with a booking owned by the "owner" user (78 explicit expectations: ok / unauthenticated / forbidden / not_found), plus checks that every registered capability is covered, agent-exposed capabilities declare scopes and none is admin, IDOR responses are byte-identical to missing-resource responses, and denials are audited.
+`tests/authz-matrix.test.ts` runs 13 actor profiles × 7 capabilities through the real executor with a booking owned by the "owner" user (91 explicit expectations: ok / unauthenticated / forbidden / not_found), plus checks that every registered capability is covered, agent-exposed capabilities declare scopes and none is admin, IDOR responses are byte-identical to missing-resource responses, and denials are audited.
 `tests/auth-http.test.ts` repeats the critical cases end-to-end over HTTP with real signed tokens: IDOR, expired token, wrong audience, scope escalation (token claims more than the grant), revoked grant, replayed/other-input confirmation, CSRF, rate limit, oversize body.
 
 Adding a capability: add its row/column to the matrix (the coverage test fails otherwise), give it a `requirement`, and for id-addressed resources a `loadResource`.
