@@ -4,7 +4,7 @@ import { ANONYMOUS } from "@/core/auth";
 import { createExecutor, createRegistry, defineCapability } from "@/core/capabilities";
 import { DefaultPolicy } from "@/core/authorization";
 import { InMemoryIdempotencyStore } from "@/core/idempotency";
-import { InMemoryAuditLog, nullLogger, hashInput } from "@/core/logging";
+import { InMemoryAuditLog, nullLogger, hashInput, type AuditEvent, type AuditLog } from "@/core/logging";
 import { NOW, ORG_ID, USER_ID, agent, user } from "./fixtures";
 
 type Deps = { counter: { n: number } };
@@ -32,12 +32,12 @@ const owned = defineCapability({
   execute: async () => ({ ok: true }),
 });
 
-function setup() {
+function setup(auditOverride?: AuditLog) {
   const deps: Deps = { counter: { n: 0 } };
   const audit = new InMemoryAuditLog();
   const executor = createExecutor<Deps>({
     registry: createRegistry<Deps>([note, owned]),
-    policy: new DefaultPolicy(() => NOW), audit, idempotency: new InMemoryIdempotencyStore(() => NOW.getTime()),
+    policy: new DefaultPolicy(() => NOW), audit: auditOverride ?? audit, idempotency: new InMemoryIdempotencyStore(),
     logger: nullLogger, deps, clock: () => NOW,
   });
   return { deps, audit, executor };
@@ -82,7 +82,9 @@ describe("executor pipeline", () => {
     expect(a.data).toEqual({ id: 1 });
     expect(b.data).toEqual({ id: 1 });
     expect(deps.counter.n).toBe(1);
-    expect(audit.events.filter((e) => e.outcome === "success")).toHaveLength(1);
+    // original execution + audited replay; only one real execution
+    expect(audit.events.filter((e) => e.outcome === "success" && !e.detail?.replayed)).toHaveLength(1);
+    expect(audit.events.filter((e) => e.detail?.replayed === true)).toHaveLength(1);
   });
   it("rejects key reuse with a different payload", async () => {
     const { executor } = setup();
@@ -115,5 +117,43 @@ describe("executor pipeline", () => {
   });
   it("unknown capability is 404", async () => {
     await expect(setup().executor.invoke("nope.nope", user, {})).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("idempotency: claim before execute (no check-then-act)", () => {
+  it("concurrent requests with the same key execute the mutation exactly once", async () => {
+    const { executor, deps } = setup();
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () => executor.invoke("notes.create", user, { text: "x" }, { idempotencyKey: KEY })),
+    );
+    expect(deps.counter.n).toBe(1);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(rejected.every((r) => r.reason.code === "conflict" && r.reason.headers?.["retry-after"] === "1")).toBe(true);
+  });
+  it("a failed execution releases the claim so a retry can run", async () => {
+    let fail = true;
+    const flaky = defineCapability({ ...note, name: "notes.flaky", http: { method: "POST", path: "/api/flaky" }, mcp: { toolName: "flaky", exposed: false },
+      execute: async (ctx: { deps: Deps }) => { if (fail) throw new Error("boom"); return { id: ++ctx.deps.counter.n }; } });
+    const deps: Deps = { counter: { n: 0 } };
+    const executor = createExecutor<Deps>({ registry: createRegistry<Deps>([flaky]), policy: new DefaultPolicy(() => NOW), audit: new InMemoryAuditLog(),
+      idempotency: new InMemoryIdempotencyStore(), logger: nullLogger, deps, clock: () => NOW });
+    await expect(executor.invoke("notes.flaky", user, { text: "x" }, { idempotencyKey: KEY })).rejects.toThrow("boom");
+    fail = false;
+    expect((await executor.invoke("notes.flaky", user, { text: "x" }, { idempotencyKey: KEY })).data).toEqual({ id: 1 });
+  });
+  it("an audit failure after the mutation is recovered by the audited replay (never permanently unaudited)", async () => {
+    const events: AuditEvent[] = [];
+    let failing = true;
+    const flakyAudit: AuditLog = { record: async (e) => { if (failing) throw new Error("audit down"); events.push(e); } };
+    const { executor, deps } = setup(flakyAudit);
+    await expect(executor.invoke("notes.create", user, { text: "x" }, { idempotencyKey: KEY })).rejects.toMatchObject({ code: "internal" });
+    expect(deps.counter.n).toBe(1); // mutation happened
+    failing = false;
+    const retry = await executor.invoke("notes.create", user, { text: "x" }, { idempotencyKey: KEY });
+    expect(retry.data).toEqual({ id: 1 });
+    expect(deps.counter.n).toBe(1); // not re-executed
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: "success", detail: { replayed: true } });
   });
 });

@@ -11,35 +11,56 @@ import { AppError } from "../errors";
 export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 export const IDEMPOTENCY_TTL_MS = 24 * 3600_000;
 
-export interface StoredResponse {
-  requestHash: string;
-  response: unknown;
-  expiresAt: number;
+/** How long an in-progress claim blocks other requests; after this a crashed claimant can be superseded. */
+export const IDEMPOTENCY_LEASE_MS = 60_000;
+
+export type ClaimResult =
+  | { state: "acquired" }
+  | { state: "in_progress" } //                 another request holds the key right now
+  | { state: "done"; response: unknown } //     same key + same payload already completed → replay
+  | { state: "mismatch" }; //                   key exists with a different payload
+
+/**
+ * Claim-before-execute protocol (no check-then-act):
+ *   claim() atomically reserves (scope,key) → execute → complete(); on failure → release().
+ * Implementations MUST make claim() atomic per (scope,key) (Postgres: unique index).
+ * Residual risk: a crash after the mutation commits but before complete() lets a retry re-execute once
+ * the lease expires; mutations should therefore also be naturally idempotent (e.g. unique constraints).
+ */
+export interface IdempotencyStore {
+  claim(scope: string, key: string, requestHash: string, nowMs: number): Promise<ClaimResult>;
+  complete(scope: string, key: string, response: unknown, expiresAtMs: number): Promise<void>;
+  /** Drop an in-progress claim after a failed attempt so the client can retry. No-op if already completed. */
+  release(scope: string, key: string): Promise<void>;
 }
 
-export interface IdempotencyStore {
-  find(scope: string, key: string): Promise<StoredResponse | null>;
-  /** Must be atomic per (scope,key): the Prisma implementation uses the unique index and returns false on conflict. */
-  save(scope: string, key: string, value: StoredResponse): Promise<boolean>;
+interface Entry {
+  requestHash: string;
+  state: "in_progress" | "done";
+  response?: unknown;
+  /** done: record expiry. in_progress: lease expiry. */
+  until: number;
 }
 
 export class InMemoryIdempotencyStore implements IdempotencyStore {
-  private readonly map = new Map<string, StoredResponse>();
-  constructor(private readonly clock: () => number = Date.now) {}
-  async find(scope: string, key: string) {
-    const v = this.map.get(`${scope}#${key}`);
-    if (!v) return null;
-    if (v.expiresAt <= this.clock()) {
-      this.map.delete(`${scope}#${key}`);
-      return null;
-    }
-    return v;
-  }
-  async save(scope: string, key: string, value: StoredResponse) {
+  private readonly map = new Map<string, Entry>();
+  async claim(scope: string, key: string, requestHash: string, nowMs: number): Promise<ClaimResult> {
     const k = `${scope}#${key}`;
-    if (this.map.has(k)) return false;
-    this.map.set(k, value);
-    return true;
+    const e = this.map.get(k);
+    if (e && e.until > nowMs) {
+      if (e.requestHash !== requestHash) return { state: "mismatch" };
+      return e.state === "done" ? { state: "done", response: e.response } : { state: "in_progress" };
+    }
+    this.map.set(k, { requestHash, state: "in_progress", until: nowMs + IDEMPOTENCY_LEASE_MS });
+    return { state: "acquired" };
+  }
+  async complete(scope: string, key: string, response: unknown, expiresAtMs: number) {
+    const e = this.map.get(`${scope}#${key}`);
+    if (e) Object.assign(e, { state: "done", response, until: expiresAtMs });
+  }
+  async release(scope: string, key: string) {
+    const k = `${scope}#${key}`;
+    if (this.map.get(k)?.state === "in_progress") this.map.delete(k);
   }
 }
 
