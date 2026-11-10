@@ -11,7 +11,10 @@ import { AppError } from "../errors";
 export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 export const IDEMPOTENCY_TTL_MS = 24 * 3600_000;
 
-/** How long an in-progress claim blocks other requests; after this a crashed claimant can be superseded. */
+/**
+ * How long an in-progress claim blocks other requests; after this a crashed claimant can be superseded.
+ * Must exceed the longest expected mutation duration, otherwise a slow-but-alive request can be superseded.
+ */
 export const IDEMPOTENCY_LEASE_MS = 60_000;
 
 export type ClaimResult =
@@ -29,7 +32,11 @@ export type ClaimResult =
  */
 export interface IdempotencyStore {
   claim(scope: string, key: string, requestHash: string, nowMs: number): Promise<ClaimResult>;
-  complete(scope: string, key: string, response: unknown, expiresAtMs: number): Promise<void>;
+  /**
+   * Store the result. MUST only apply if the row is still the caller's claim (state in_progress AND same requestHash);
+   * a claimant superseded after its lease expired must not overwrite the new claimant (no-op instead).
+   */
+  complete(scope: string, key: string, requestHash: string, response: unknown, expiresAtMs: number): Promise<void>;
   /** Drop an in-progress claim after a failed attempt so the client can retry. No-op if already completed. */
   release(scope: string, key: string): Promise<void>;
 }
@@ -54,9 +61,9 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     this.map.set(k, { requestHash, state: "in_progress", until: nowMs + IDEMPOTENCY_LEASE_MS });
     return { state: "acquired" };
   }
-  async complete(scope: string, key: string, response: unknown, expiresAtMs: number) {
+  async complete(scope: string, key: string, requestHash: string, response: unknown, expiresAtMs: number) {
     const e = this.map.get(`${scope}#${key}`);
-    if (e) Object.assign(e, { state: "done", response, until: expiresAtMs });
+    if (e && e.state === "in_progress" && e.requestHash === requestHash) Object.assign(e, { state: "done", response, until: expiresAtMs });
   }
   async release(scope: string, key: string) {
     const k = `${scope}#${key}`;
