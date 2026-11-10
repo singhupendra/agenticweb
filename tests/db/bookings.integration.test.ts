@@ -123,10 +123,24 @@ describe.skipIf(!url)("bookings against Postgres", () => {
     expect(await s.claim("sc", "key-aaaaaaaa", "h1", now)).toEqual({ state: "acquired" });
     // lease expires → a new claimant supersedes the crashed one
     expect(await s.claim("sc", "key-aaaaaaaa", "h1", now + 61_000)).toEqual({ state: "acquired" });
-    await s.complete("sc", "key-aaaaaaaa", { ok: 1 }, now + 3600_000);
+    await s.complete("sc", "key-aaaaaaaa", "h1", { ok: 1 }, now + 3600_000);
     expect(await s.claim("sc", "key-aaaaaaaa", "h1", now + 62_000)).toEqual({ state: "done", response: { ok: 1 } });
+    await s.complete("sc", "key-aaaaaaaa", "other-hash", { evil: true }, now + 3600_000); // not the owner: ignored
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", now + 62_500)).toEqual({ state: "done", response: { ok: 1 } });
     await s.release("sc", "key-aaaaaaaa"); // no-op on done
     expect((await s.claim("sc", "key-aaaaaaaa", "h1", now + 63_000)).state).toBe("done");
+  });
+
+  it("a superseded claimant cannot overwrite the new claimant (Postgres)", async () => {
+    const { PrismaIdempotencyStore } = await import("@/core/db");
+    const s = new PrismaIdempotencyStore(db);
+    const t = Date.now();
+    await s.claim("sc2", "key-bbbbbbbb", "old", t);
+    await s.claim("sc2", "key-bbbbbbbb", "new", t + 61_000); // supersedes the expired lease
+    await s.complete("sc2", "key-bbbbbbbb", "old", { stale: true }, t + 3600_000); // superseded: ignored
+    expect(await s.claim("sc2", "key-bbbbbbbb", "new", t + 62_000)).toEqual({ state: "in_progress" });
+    await s.complete("sc2", "key-bbbbbbbb", "new", { fresh: true }, t + 3600_000);
+    expect(await s.claim("sc2", "key-bbbbbbbb", "new", t + 63_000)).toEqual({ state: "done", response: { fresh: true } });
   });
 
   it("concurrent cancels of one booking all succeed idempotently and end cancelled", async () => {

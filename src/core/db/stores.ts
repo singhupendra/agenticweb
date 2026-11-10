@@ -38,9 +38,10 @@ export class PrismaIdempotencyStore implements IdempotencyStore {
     return { state: "in_progress" }; // heavy contention: let the client retry
   }
 
-  async complete(scope: string, key: string, response: unknown, expiresAtMs: number): Promise<void> {
-    await this.db.idempotencyRecord.update({
-      where: { scope_key: { scope, key } },
+  /** Conditional on still owning the claim; a superseded claimant matches 0 rows and is ignored. */
+  async complete(scope: string, key: string, requestHash: string, response: unknown, expiresAtMs: number): Promise<void> {
+    await this.db.idempotencyRecord.updateMany({
+      where: { scope, key, state: "in_progress", requestHash },
       data: { state: "done", response: response as Prisma.InputJsonValue, expiresAt: new Date(expiresAtMs), leaseExpiresAt: null },
     });
   }
