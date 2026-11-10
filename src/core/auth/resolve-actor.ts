@@ -12,7 +12,7 @@ import { AppError } from "../errors";
 import { ANONYMOUS, type Actor, type ActorResolver } from "./actor";
 import { bearerChallenge } from "./challenge";
 import { DevHeaderActorResolver } from "./dev-resolver";
-import type { GrantStore } from "./grants";
+import type { GrantStore, GrantWriter } from "./grants";
 import { getMockIssuer } from "./mock-issuer";
 import { createAccessTokenVerifier, type AccessTokenVerifier } from "./access-token";
 import { SessionManager } from "./session";
@@ -91,12 +91,22 @@ export async function buildAuthRuntime(env: Env, extra: { grants?: GrantStore } 
 }
 
 const g = globalThis as unknown as { __authRuntime?: Promise<AuthRuntime>; __grantStore?: GrantStore };
-/** Wire a persistent GrantStore (revocation) before the first request. */
+/** Override the GrantStore (tests, alternative backends) before the first request. */
 export function setGrantStore(store: GrantStore): void {
   g.__grantStore = store;
 }
+/**
+ * The authoritative grant store: Postgres by default (`AUTH_STORES=postgres`) so revocation is durable and shared by every
+ * instance; `memory` mode has none (token scopes are then trusted as minted — tests / throwaway dev only).
+ */
+export async function getGrantStore(): Promise<(GrantStore & Partial<GrantWriter>) | undefined> {
+  if (g.__grantStore) return g.__grantStore;
+  if (getEnv().AUTH_STORES !== "postgres") return undefined;
+  const { getPrisma, PrismaGrantStore } = await import("../db");
+  return (g.__grantStore = new PrismaGrantStore(getPrisma()));
+}
 export function getAuthRuntime(): Promise<AuthRuntime> {
-  return (g.__authRuntime ??= buildAuthRuntime(getEnv(), { grants: g.__grantStore }));
+  return (g.__authRuntime ??= getGrantStore().then((grants) => buildAuthRuntime(getEnv(), { grants })));
 }
 
 export async function resolveActor(request: Request, opts: ResolveOptions = {}): Promise<Actor> {

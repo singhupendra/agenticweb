@@ -18,6 +18,11 @@ export const EnvSchema = z
     MOCK_ISSUER_ENABLED: bool.default(false),
     /** HMAC secret for human session cookies (>= 32 chars). Required in production. */
     SESSION_SECRET: z.string().min(32).optional(),
+    /**
+     * Where security state lives: `postgres` (grants, human confirmations, rate-limit counters, replay ids — shared by all
+     * instances, survives restarts) or `memory` (per-process; unit tests / single throwaway instance). Production refuses `memory`.
+     */
+    AUTH_STORES: z.enum(["postgres", "memory"]).default("postgres"),
     /** Trust `x-forwarded-for` for per-client rate limiting (only behind a proxy that sets it). */
     TRUST_PROXY: bool.default(false),
     RATE_LIMIT_ANON_PER_MIN: z.coerce.number().int().positive().default(60),
@@ -31,6 +36,7 @@ export const EnvSchema = z
     if (env.NODE_ENV === "production") {
       if (env.MOCK_ISSUER_ENABLED) ctx.addIssue({ code: "custom", path: ["MOCK_ISSUER_ENABLED"], message: "must not be enabled in production" });
       if (!env.AUTH_ISSUER) ctx.addIssue({ code: "custom", path: ["AUTH_ISSUER"], message: "required in production" });
+      if (env.AUTH_STORES === "memory") ctx.addIssue({ code: "custom", path: ["AUTH_STORES"], message: "must be postgres in production (state must be shared and durable)" });
       if (!env.SESSION_SECRET) ctx.addIssue({ code: "custom", path: ["SESSION_SECRET"], message: "required in production" });
     }
   });

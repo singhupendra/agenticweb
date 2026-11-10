@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { DevHeaderActorResolver, type Actor } from "@/core/auth";
+import { AgentConfirmationGate } from "@/agents/policies";
 import { createMcpHandler, type McpDeps } from "@/agents/mcp/server";
 import { actorHeader } from "../api/harness";
 import { testRuntime } from "../fixtures";
@@ -12,8 +13,10 @@ import { testRuntime } from "../fixtures";
 export const NOW = new Date("2026-11-09T10:00:00.000Z");
 
 export async function startMcp(over: Partial<McpDeps> = {}, rt = testRuntime()) {
+  const gate = new AgentConfirmationGate();
   const handler = createMcpHandler({
     runtime: () => rt,
+    gate: () => gate,
     resolver: () => new DevHeaderActorResolver({ enabled: true, nodeEnv: "test", now: () => NOW }),
     appUrl: () => "http://localhost:3000",
     ...over,
@@ -43,9 +46,18 @@ export async function startMcp(over: Partial<McpDeps> = {}, rt = testRuntime()) 
   }
   const raw = (body: unknown, headers: Record<string, string> = {}, method = "POST") =>
     fetch(url, { method, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: method === "POST" ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined });
-  return { rt, url, connect, raw, close: async () => { await Promise.all(clients.map((c) => c.close())); await new Promise((r) => server.close(r)); } };
+  return { rt, gate, url, connect, raw, close: async () => { await Promise.all(clients.map((c) => c.close())); await new Promise((r) => server.close(r)); } };
 }
 
 /** Parse the JSON text content of a tool result (problem or data). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const textJson = (r: any) => JSON.parse(r.content[0].text);
+
+/** A write needs the HUMAN's out-of-band approval: call → confirmationId → human approves → retry with the id. */
+export async function writeApproved(gate: AgentConfirmationGate, client: Client, approver: Actor, call: { name: string; arguments: Record<string, unknown> }) {
+  const first = await client.callTool(call);
+  const p = textJson(first);
+  if (p.code !== "confirmation_required") return first;
+  await gate.approve(p.confirmationId, approver);
+  return client.callTool({ ...call, arguments: { ...call.arguments, confirmationId: p.confirmationId } });
+}

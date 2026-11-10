@@ -4,7 +4,7 @@ import { getEnv } from "../env";
 import { notFound, problemResponse, validationError } from "../errors";
 import { ScopeSchema } from "./actor";
 import { getMockIssuer } from "./mock-issuer";
-import { resourceUri } from "./resolve-actor";
+import { getGrantStore, resourceUri } from "./resolve-actor";
 
 const MintBody = z.strictObject({
   kind: z.enum(["user", "admin", "agent"]),
@@ -40,6 +40,13 @@ export async function mockTokenResponse(request: Request): Promise<Response> {
     const b = parsed.data;
     const o = { audience: resourceUri(env.APP_URL, b.resource), expiresInSec: b.expiresInSec };
     if (b.kind !== "agent" && (!b.userId || !b.organizationId)) throw validationError([{ path: "userId", message: "userId and organizationId are required" }]);
+    if (b.kind === "agent") {
+      // The mock issuer plays the consent screen: the user "consented" to this client+scopes, recorded durably (and revocable).
+      const grants = await getGrantStore();
+      await grants?.put?.({ grantId: b.grantId, userId: b.userId ?? b.clientId, clientId: b.clientId, scopes: b.scopes }).catch((e: unknown) => {
+        if ((e as { code?: string }).code !== "conflict") throw e; // existing grant of the same owner is fine; a revoked one stays revoked
+      });
+    }
     const token =
       b.kind === "agent"
         ? await issuer.agent({ clientId: b.clientId, grantId: b.grantId, scopes: b.scopes, userId: b.userId, organizationId: b.organizationId }, o)

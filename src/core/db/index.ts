@@ -7,3 +7,4 @@ export function getPrisma(): PrismaClient {
   return (client ??= new PrismaClient({ adapter: new PrismaPg({ connectionString: getEnv().DATABASE_URL }) }));
 }
 export * from "./stores";
+export * from "./auth-stores";

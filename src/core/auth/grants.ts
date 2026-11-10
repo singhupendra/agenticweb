@@ -17,6 +17,12 @@ export interface GrantStore {
   get(grantId: string): Promise<Grant | null>;
 }
 
+/** Write side (consent / mock issuer / admin tooling). `revoke` returns true when this call revoked it. */
+export interface GrantWriter {
+  put(g: Grant): Promise<void>;
+  revoke(grantId: string, at?: Date): Promise<boolean>;
+}
+
 export class InMemoryGrantStore implements GrantStore {
   private readonly grants = new Map<string, Grant>();
   constructor(grants: Grant[] = []) {
