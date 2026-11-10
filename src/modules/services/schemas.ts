@@ -13,7 +13,19 @@ export const ServiceSchema = z.object({
 });
 export type Service = z.infer<typeof ServiceSchema>;
 
-export const ListServicesInput = z.strictObject({ orgSlug: slugSchema, ...pageInputShape });
+export const SERVICE_SORTS = ["name", "-name", "priceMinor", "-priceMinor", "durationMinutes", "-durationMinutes"] as const;
+export const ServiceSortSchema = z.enum(SERVICE_SORTS);
+export type ServiceSort = z.infer<typeof ServiceSortSchema>;
+
+export const ListServicesInput = z.strictObject({
+  orgSlug: slugSchema,
+  /** Case-insensitive substring match on the service name. */
+  q: z.string().trim().min(1).max(80).optional(),
+  /** Only services priced at or below this many minor units. */
+  maxPriceMinor: z.coerce.number().int().min(0).optional(),
+  sort: ServiceSortSchema.default("name"),
+  ...pageInputShape,
+});
 export type ListServicesInput = z.infer<typeof ListServicesInput>;
 
 export const GetServiceInput = z.strictObject({ orgSlug: slugSchema, serviceSlug: slugSchema });

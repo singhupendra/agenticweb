@@ -10,10 +10,16 @@ const map = (r: Row): Service => ({
 
 export function createPrismaServiceRepository(db: PrismaClient): ServiceRepository {
   return {
-    async listActive(organizationId, { offset, limit }) {
-      const where = { organizationId, active: true };
+    async listActive(organizationId, { offset, limit, q, maxPriceMinor, sort = "name" }) {
+      const where = {
+        organizationId, active: true,
+        ...(q ? { name: { contains: q, mode: "insensitive" as const } } : {}),
+        ...(maxPriceMinor !== undefined ? { priceMinor: { lte: maxPriceMinor } } : {}),
+      };
+      const dir = sort.startsWith("-") ? ("desc" as const) : ("asc" as const);
+      const key = sort.replace("-", "") as "name" | "priceMinor" | "durationMinutes";
       const [rows, total] = await Promise.all([
-        db.service.findMany({ where, orderBy: { name: "asc" }, skip: offset, take: limit }),
+        db.service.findMany({ where, orderBy: [{ [key]: dir }, { slug: "asc" }], skip: offset, take: limit }),
         db.service.count({ where }),
       ]);
       return { items: rows.map(map), total };

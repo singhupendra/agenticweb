@@ -28,7 +28,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
         HAVING s.capacity - COUNT(b.id) FILTER (WHERE b.status <> 'cancelled') > 0`;
       const [rows, count] = await Promise.all([
         db.$queryRaw<{ id: string; serviceId: string; startsAt: Date; endsAt: Date; remaining: number }[]>(
-          Prisma.sql`${base} ORDER BY s."startsAt" ASC, s.id ASC LIMIT ${q.limit} OFFSET ${q.offset}`),
+          Prisma.sql`${base} ORDER BY s."startsAt" ${q.sort === "-startsAt" ? Prisma.raw("DESC") : Prisma.raw("ASC")}, s.id ASC LIMIT ${q.limit} OFFSET ${q.offset}`),
         db.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT COUNT(*)::int AS n FROM (${base}) t`),
       ]);
       const items: Slot[] = rows.map((r) => ({
@@ -71,13 +71,22 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
       return b && toRecord(b);
     },
 
-    async listByUser(organizationId, userId, { offset, limit }) {
-      const where = { organizationId, userId };
+    async listByUser(organizationId, userId, { offset, limit, status, sort }) {
+      const where = { organizationId, userId, ...(status ? { status } : {}) };
       const [rows, total] = await Promise.all([
-        db.booking.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "asc" }], skip: offset, take: limit, include: { slot: { select: { serviceId: true } } } }),
+        db.booking.findMany({ where, orderBy: [{ createdAt: sort === "createdAt" ? "asc" : "desc" }, { id: "asc" }], skip: offset, take: limit, include: { slot: { select: { serviceId: true } } } }),
         db.booking.count({ where }),
       ]);
       return { items: rows.map(toRecord), total };
+    },
+
+    async updateNotes({ organizationId, bookingId, notes }) {
+      // Conditional UPDATE: a concurrent cancel can never be overwritten by an edit.
+      const r = await db.booking.updateMany({ where: { id: bookingId, organizationId, status: { not: "cancelled" } }, data: { notes } });
+      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true } } } });
+      if (!b) return { ok: false, reason: "not_found" };
+      if (r.count === 1) return { ok: true, booking: toRecord(b) };
+      return { ok: false, reason: "cancelled" };
     },
 
     async cancel({ organizationId, bookingId, now }) {

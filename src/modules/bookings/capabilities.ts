@@ -5,7 +5,7 @@ import type { ResourceRef } from "@/core/authorization";
 import type { OrganizationService } from "@/modules/organization/service";
 import type { BookingsService } from "./service";
 import {
-  BookingSchema, CancelBookingInput, CreateBookingInput, GetBookingInput, ListMyBookingsInput, ListSlotsInput, SlotSchema,
+  BookingSchema, CancelBookingInput, CreateBookingInput, GetBookingInput, ListMyBookingsInput, ListSlotsInput, SlotSchema, UpdateBookingInput,
 } from "./schemas";
 
 export interface BookingsDeps {
@@ -37,7 +37,7 @@ export const listSlots = defineCapability({
   output: paginatedSchema(SlotSchema),
   requirement: { access: "public", scope: "services:read" },
   mutating: false,
-  http: { method: "GET", path: "/api/organizations/{orgSlug}/services/{serviceSlug}/slots" },
+  http: { method: "GET", path: "/api/organizations/{orgSlug}/services/{serviceSlug}/slots", cacheSeconds: 10 },
   mcp: { toolName: "list_slots", exposed: true, description: "List upcoming bookable slots for a service, optionally between `from` and `to` (ISO-8601)." },
   execute: (ctx: Ctx, i) => ctx.deps.bookings.listSlots({ ...i, page: i.page, pageSize: i.pageSize, now: ctx.now }),
 });
@@ -58,7 +58,7 @@ export const createBooking = defineCapability({
 
 export const listMyBookings = defineCapability({
   name: "bookings.list",
-  summary: "List the authenticated user's own bookings.",
+  summary: "List the authenticated user's own bookings (filter by `status`, sort by `createdAt`).",
   input: ListMyBookingsInput,
   output: paginatedSchema(publicBooking),
   requirement: { access: "authenticated", scope: "bookings:read" },
@@ -66,7 +66,7 @@ export const listMyBookings = defineCapability({
   http: { method: "GET", path: "/api/organizations/{orgSlug}/bookings" },
   mcp: { toolName: "list_my_bookings", exposed: true, description: "List the bookings of the user you act for." },
   loadResource: (ctx: Ctx, i) => orgResource(ctx, i.orgSlug),
-  execute: (ctx: Ctx, i) => ctx.deps.bookings.listMine({ orgSlug: i.orgSlug, userId: requireUserId(ctx.actor), page: i.page, pageSize: i.pageSize }),
+  execute: (ctx: Ctx, i) => ctx.deps.bookings.listMine({ orgSlug: i.orgSlug, userId: requireUserId(ctx.actor), status: i.status, sort: i.sort, page: i.page, pageSize: i.pageSize }),
 });
 
 export const getBooking = defineCapability({
@@ -82,6 +82,19 @@ export const getBooking = defineCapability({
   execute: (ctx: Ctx, i) => ctx.deps.bookings.get(i.orgSlug, i.bookingId),
 });
 
+export const updateBooking = defineCapability({
+  name: "bookings.update",
+  summary: "Update a booking's notes (owner or admin). Cancelled bookings are immutable. Requires an Idempotency-Key.",
+  input: UpdateBookingInput,
+  output: publicBooking,
+  requirement: { access: "owner-or-admin", scope: "bookings:write" },
+  mutating: true,
+  http: { method: "PATCH", path: "/api/organizations/{orgSlug}/bookings/{bookingId}" },
+  mcp: { toolName: "update_booking", exposed: false, description: "Change the notes on one of the user's bookings. Requires an idempotencyKey." },
+  loadResource: (ctx: Ctx, i) => bookingResource(ctx, i.orgSlug, i.bookingId),
+  execute: (ctx: Ctx, i) => ctx.deps.bookings.updateNotes({ orgSlug: i.orgSlug, bookingId: i.bookingId, notes: i.notes }),
+});
+
 export const cancelBooking = defineCapability({
   name: "bookings.cancel",
   summary: "Cancel a booking (owner or admin). Requires an Idempotency-Key.",
@@ -90,6 +103,7 @@ export const cancelBooking = defineCapability({
   requirement: { access: "owner-or-admin", scope: "bookings:write" },
   mutating: true,
   http: { method: "POST", path: "/api/organizations/{orgSlug}/bookings/{bookingId}/cancel" },
+  httpAliases: [{ method: "DELETE", path: "/api/organizations/{orgSlug}/bookings/{bookingId}" }],
   mcp: { toolName: "cancel_booking", exposed: true, description: "Cancel one of the user's bookings. Requires an idempotencyKey." },
   loadResource: (ctx: Ctx, i) => bookingResource(ctx, i.orgSlug, i.bookingId),
   execute: (ctx: Ctx, i) => ctx.deps.bookings.cancel({ orgSlug: i.orgSlug, bookingId: i.bookingId, now: ctx.now }),

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Slot } from "./schemas";
-import type { BookingRecord, BookingRepository, CancelResult, ReserveResult } from "./service";
+import type { BookingRecord, BookingRepository, CancelResult, ReserveResult, UpdateResult } from "./service";
 
 export interface MemorySlot {
   id: string; serviceId: string; organizationId: string; serviceActive: boolean;
@@ -24,7 +24,7 @@ export class InMemoryBookingRepository implements BookingRepository {
       .filter((s) => s.organizationId === q.organizationId && s.serviceId === q.serviceId && s.serviceActive)
       .filter((s) => s.startsAt > q.now && (!q.from || s.startsAt >= q.from) && (!q.to || s.startsAt <= q.to))
       .filter((s) => s.capacity - this.active(s.id).length > 0)
-      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+      .sort((a, b) => (a.startsAt.getTime() - b.startsAt.getTime()) * (q.sort === "-startsAt" ? -1 : 1));
     return { items: all.slice(q.offset, q.offset + q.limit).map((s) => this.toSlot(s)), total: all.length };
   }
 
@@ -46,9 +46,19 @@ export class InMemoryBookingRepository implements BookingRepository {
   async findById(organizationId: string, id: string) {
     return this.bookings.find((b) => b.id === id && b.organizationId === organizationId) ?? null;
   }
-  async listByUser(organizationId: string, userId: string, p: { offset: number; limit: number }) {
-    const all = this.bookings.filter((b) => b.organizationId === organizationId && b.userId === userId);
+  async listByUser(organizationId: string, userId: string, p: Parameters<BookingRepository["listByUser"]>[2]) {
+    const dir = p.sort === "createdAt" ? 1 : -1;
+    const all = this.bookings
+      .filter((b) => b.organizationId === organizationId && b.userId === userId && (!p.status || b.status === p.status))
+      .sort((a, b) => (a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)) * dir);
     return { items: all.slice(p.offset, p.offset + p.limit), total: all.length };
+  }
+  async updateNotes(q: { organizationId: string; bookingId: string; notes: string | null }): Promise<UpdateResult> {
+    const b = this.bookings.find((x) => x.id === q.bookingId && x.organizationId === q.organizationId);
+    if (!b) return { ok: false, reason: "not_found" };
+    if (b.status === "cancelled") return { ok: false, reason: "cancelled" };
+    b.notes = q.notes;
+    return { ok: true, booking: b };
   }
   async cancel(q: { organizationId: string; bookingId: string; now: Date }): Promise<CancelResult> {
     const b = this.bookings.find((x) => x.id === q.bookingId && x.organizationId === q.organizationId);
