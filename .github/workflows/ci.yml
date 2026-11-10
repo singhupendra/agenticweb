@@ -2,18 +2,14 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
-  workflow_dispatch:
 permissions: { contents: read }
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 # Third-party actions are pinned to commit SHAs (tag in the comment); Dependabot keeps them current.
 jobs:
   verify:
-    name: Lint, types, tests (Postgres), build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -25,9 +21,9 @@ jobs:
       DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
       DATABASE_URL_TEST: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -35,6 +31,39 @@ jobs:
       - run: pnpm db:deploy
       - run: pnpm test:run   # includes Postgres integration tests (DATABASE_URL_TEST)
       - run: pnpm build
+
+  # Phase 6 (QA): agentic E2E over the real app, deterministic evals, and Playwright — all on DISPOSABLE agenticweb_qa_* databases
+  # created by tests/agentic/support/with-test-db.ts (never the service's main database). Independent of `verify` so failures are visible in parallel.
+  agentic:
+    name: Agentic E2E, evals and Playwright (isolated DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: agenticweb, POSTGRES_PASSWORD: agenticweb_dev_only, POSTGRES_DB: agenticweb }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agenticweb" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
+      QA_ADMIN_DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Agentic E2E + negative suites (MCP SDK client, mock issuer, real app)
+        run: pnpm test:agentic
+      - name: Deterministic evals (fixed dataset v1; gates - success >= 95%, authz safety 100%, txn correctness 100%)
+        run: pnpm eval
+      - name: Playwright E2E (human UI, channel parity, WebMCP)
+        run: pnpm test:e2e:isolated
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: qa-reports, path: "evals/results/\nplaywright-report/\ntest-results/", if-no-files-found: ignore, retention-days: 14 }
 
   audit:
     name: Dependency audit (fails on high/critical)
@@ -47,52 +76,6 @@ jobs:
         with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm audit --audit-level=high
-
-  e2e:
-    name: "Playwright E2E (placeholder-safe, skips if no playwright config)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: verify
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env: { POSTGRES_USER: agenticweb, POSTGRES_PASSWORD: agenticweb_dev_only, POSTGRES_DB: agenticweb }
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U agenticweb" --health-interval 5s --health-timeout 3s --health-retries 10
-    env:
-      DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
-      E2E_DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Detect Playwright setup
-        id: detect
-        run: |
-          if ls playwright.config.* >/dev/null 2>&1; then echo "present=true" >> "$GITHUB_OUTPUT"; else
-            echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::No playwright.config.* yet — E2E job is a placeholder and passes."; fi
-      - if: steps.detect.outputs.present == 'true'
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - if: steps.detect.outputs.present == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version-file: .nvmrc, cache: pnpm }
-      - if: steps.detect.outputs.present == 'true'
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm db:deploy && pnpm db:seed
-          pnpm exec playwright install --with-deps chromium
-          # Pre-warm `next dev` (cold on-demand route compilation can exceed Playwright's 5s expect timeout on the first
-          # booking POST). Same env as playwright.config.ts webServer; CI="" lets it reuse this server.
-          DATABASE_URL="$E2E_DATABASE_URL" DEV_AUTH_ENABLED=true APP_URL=http://localhost:3100 NODE_ENV=development LOG_LEVEL=error \
-            nohup pnpm exec next dev -p 3100 > next-dev.log 2>&1 &
-          for _ in $(seq 1 90); do curl -fs localhost:3100/api/health >/dev/null && break; sleep 1; done
-          for u in / /services/quick-consult /bookings/00000000-0000-4000-8000-000000000999 /robots.txt /sitemap.xml /llms.txt /openapi.json /docs; do
-            curl -s -o /dev/null "localhost:3100$u" || true
-          done
-          curl -s -o /dev/null -X POST -H 'content-type: application/json' -d '{}' localhost:3100/api/organizations/northwind-studio/bookings || true
-          CI="" pnpm test:e2e
-      - if: steps.detect.outputs.present == 'true' && always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: playwright-report, path: "playwright-report/\ntest-results/", if-no-files-found: ignore, retention-days: 14 }
 
   infra-lint:
     name: Dockerfile, workflows, observability config

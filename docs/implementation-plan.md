@@ -61,7 +61,7 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
 | 5 | WebMCP (feature-detected, confirm on mutations) | Frontend | done (spec is a CG draft) | `tests/discovery/webmcp.test.ts`, `tests/e2e/webmcp.spec.ts`, `docs/webmcp-integration.md` |
-| 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (not in CI yet) | see Verification (Frontend) |
+| 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (in CI via QA `agentic` job, isolated DB) | see Verification (Frontend) |
 | 3 | OIDC/OAuth 2.1 bearer verification (jose/JWKS), audience/issuer/exp/alg pinning, mock issuer | Security | done | `tests/auth-tokens.test.ts`; live: mock-issuer tokens accepted, bad/expired/wrong-audience → 401 |
 | 3 | `resolveActor(request, {resource})` single entry point; dev resolver demoted | Security | done | `tests/auth-resolve.test.ts`; REST adapter uses it |
 | 3 | Sessions + CSRF (cookie, HMAC token, Origin) | Security | done | `tests/auth-session.test.ts` |
@@ -71,12 +71,13 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | Authorization matrix (13 profiles × 7 capabilities = 91 cells + IDOR/expiry/audience/escalation/replay) | Security | done | `tests/authz-matrix.test.ts`, `tests/auth-http.test.ts` |
 | 3 | docs/authentication.md (+ MCP worker guide), docs/authorization.md, threat-model rows | Security | done | files |
 | 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
+| 6 | Agentic E2E harness (MCP SDK + mock issuer, real app/DB), negative suite, channel parity (MCP/REST/UI), fixed-dataset evals + optional LLM runner, Playwright in CI (isolated DB) | QA | done | `docs/test-report.md` (raw output), `docs/testing.md`; found+fixed non-UTC DB time-zone bug; 2 open gate findings |
 | 4–7 | see phases above | various | todo | — |
 | 6/7 | OpenTelemetry SDK/OTLP bootstrap, `traced()`, agent metrics, executor hook | DevOps | done | `tests/observability/*` (25 tests incl. real OTLP export to a local HTTP sink); live: `next start` standalone exported Next HTTP spans + nested `capability *` spans + agent metrics to a local OTLP sink |
 | 6 | Log redaction (key + value scrubbing) | DevOps | done | `tests/observability/redaction.test.ts` |
 | 6/7 | Grafana dashboard + Prometheus alerts + OTel collector compose profile | DevOps | done (static) | PromQL of 7 alerts + 15 panels parsed with the official lezer-promql parser; YAML parsed. `promtool`/collector `validate` run in CI only (local run of a downloaded binary was blocked) |
 | 7 | Dockerfile (multi-stage, non-root, healthcheck, standalone), compose, deploy/k8s | DevOps | done, **image build unverified locally** | Docker engine hangs; Podman VM crashed mid-build (pnpm install stage completed). Standalone bundle verified natively; hadolint/trivy not available locally — CI job `infra-lint`/`container` is the first real build |
-| 6/7 | CI hardening (audit, Playwright placeholder, Trivy+Grype, SBOM, infra lint) | DevOps | done (not yet run on GitHub) | actions pinned to SHAs; `pnpm audit --audit-level=high` exit 0 locally (1 moderate, dev-only) |
+| 6/7 | CI hardening (audit, Trivy+Grype, SBOM, hadolint/actionlint/promtool; Playwright runs in the QA `agentic` job) | DevOps | done (not yet run on GitHub) | actions pinned to SHAs; `pnpm audit --audit-level=high` exit 0 locally (1 moderate, dev-only) |
 | 3–7 | remaining items | various | todo | — |
 
 ## Verification (Phase 1)
@@ -261,8 +262,10 @@ Severity: 1 moderate
 
 Not verified: `docker build` (engine hung, Podman VM crashed), hadolint, Trivy/Grype results, `promtool test rules`, collector `validate`, Grafana rendering, rollback rehearsal, backups/restore, load test.
 
-Re-run after rebasing onto main (REST v1 + frontend landed): `pnpm lint` clean · `pnpm tsc --noEmit` exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 22 passed (22), Tests 207 passed (207) · `pnpm build` → Compiled successfully, Finished TypeScript. CI e2e job now runs `pnpm test:e2e` (Playwright config exists on main); not yet run on GitHub.
+Re-run after rebasing onto main (REST v1 + frontend landed): `pnpm lint` clean · `pnpm tsc --noEmit` exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 22 passed (22), Tests 207 passed (207) · `pnpm build` → Compiled successfully, Finished TypeScript.
 
 Re-run after second rebase (Phase 3 authn landed; prod now needs AUTH_ISSUER/SESSION_SECRET — compose, CI smoke, k8s, docs updated): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 28 passed (28), Tests 381 passed (381) · build Compiled successfully. CI first run on GitHub: verify, audit, e2e green; Trivy image scan found only base-image npm CVEs → npm/yarn/corepack stripped from runner; hadolint/actionlint/Grype fixes in progress.
 
 Re-run after third rebase (MCP server landed; MCP channel now emits agent requests / tool discovery / human-intervention metrics, `tests/observability/mcp-metrics.test.ts`): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 31 passed (31), Tests 419 passed (419) · build Compiled successfully (incl. /mcp).
+
+After merging main (QA PR #8): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 35 passed (35), Tests 430 passed (430) · build Compiled successfully. My duplicate Playwright job removed; E2E is QA's `agentic` job (`pnpm test:e2e:isolated`). CI runs so far: verify, audit, infra-lint green; container job: Trivy green, Grype zlib CVE fixed via `apk upgrade` (pending re-run).

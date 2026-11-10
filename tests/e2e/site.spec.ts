@@ -84,7 +84,6 @@ test.describe("signed-in customer (dev actor)", () => {
     await page.goto("/services/quick-consult");
     const form = page.getByTestId("booking-form");
     await expect(form).toBeVisible();
-    await page.waitForLoadState("networkidle"); // let React hydrate before interacting (slow cold `next dev` on CI otherwise posts an empty slotId)
     await expectNoAxeViolations(page);
 
     // Validation: submitting without a slot shows an announced error.

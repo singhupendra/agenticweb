@@ -19,3 +19,4 @@ Integration tests: `DATABASE_URL_TEST=<url of a migrated, disposable db> pnpm te
 
 E2E: `pnpm exec playwright install chromium && E2E_DATABASE_URL=<migrated+seeded db> pnpm test:e2e` (see [`docs/agent-discovery.md`](docs/agent-discovery.md), [`docs/webmcp-integration.md`](docs/webmcp-integration.md)).
 Production-like stack: `docker compose --profile app up --build` (add `--profile observability` for collector/Prometheus/Jaeger/Grafana).
+E2E: `pnpm exec playwright install chromium && pnpm test:e2e:isolated` (creates a disposable `agenticweb_qa_*` DB; E2E refuses any other DB) (see [`docs/agent-discovery.md`](docs/agent-discovery.md), [`docs/webmcp-integration.md`](docs/webmcp-integration.md)).

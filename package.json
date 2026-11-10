@@ -21,7 +21,11 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "postinstall": "prisma generate",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:agentic": "tsx tests/agentic/support/with-test-db.ts -- vitest run --config vitest.agentic.config.ts",
+    "test:e2e:isolated": "tsx tests/agentic/support/with-test-db.ts -- playwright test",
+    "eval": "tsx evals/run.ts",
+    "eval:llm": "tsx evals/run-llm.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
