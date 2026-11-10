@@ -66,7 +66,7 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
 | 5 | WebMCP (feature-detected, confirm on mutations) | Frontend | done (spec is a CG draft) | `tests/discovery/webmcp.test.ts`, `tests/e2e/webmcp.spec.ts`, `docs/webmcp-integration.md` |
-| 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (not in CI yet) | see Verification (Frontend) |
+| 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (in CI via QA `agentic` job, isolated DB) | see Verification (Frontend) |
 | 3 | OIDC/OAuth 2.1 bearer verification (jose/JWKS), audience/issuer/exp/alg pinning, mock issuer | Security | done | `tests/auth-tokens.test.ts`; live: mock-issuer tokens accepted, bad/expired/wrong-audience → 401 |
 | 3 | `resolveActor(request, {resource})` single entry point; dev resolver demoted | Security | done | `tests/auth-resolve.test.ts`; REST adapter uses it |
 | 3 | Sessions + CSRF (cookie, HMAC token, Origin) | Security | done | `tests/auth-session.test.ts` |
@@ -76,6 +76,7 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | Authorization matrix (13 profiles × 7 capabilities = 91 cells + IDOR/expiry/audience/escalation/replay) | Security | done | `tests/authz-matrix.test.ts`, `tests/auth-http.test.ts` |
 | 3 | docs/authentication.md (+ MCP worker guide), docs/authorization.md, threat-model rows | Security | done | files |
 | 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
+| 6 | Agentic E2E harness (MCP SDK + mock issuer, real app/DB), negative suite, channel parity (MCP/REST/UI), fixed-dataset evals + optional LLM runner, Playwright in CI (isolated DB) | QA | done | `docs/test-report.md` (raw output), `docs/testing.md`; found+fixed non-UTC DB time-zone bug; 2 open gate findings |
 | 4–7 | see phases above | various | todo | — |
 
 ## Verification (Phase 1)

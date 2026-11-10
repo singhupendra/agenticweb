@@ -1,0 +1,42 @@
+{
+  "dataset": "agenticweb-consulting-studio",
+  "version": "1.0.0",
+  "frozen": true,
+  "note": "FIXED dataset. Do not edit tasks in place: add tasks.v2.json instead so scores stay comparable across runs. Seed data: prisma/seed.ts (Architecture Review 90m/15000 INR, Strategy Session 60m/9000 INR, Quick Consult 30m/4000 INR).",
+  "tasks": [
+    { "id": "book-01", "category": "book", "goal": "Book the cheapest consultation.", "prefs": { "choose": "cheapest" }, "expect": { "service": "quick-consult" } },
+    { "id": "book-02", "category": "book", "goal": "Book the shortest consultation.", "prefs": { "choose": "shortest" }, "expect": { "service": "quick-consult" } },
+    { "id": "book-03", "category": "book", "goal": "Book the longest consultation.", "prefs": { "choose": "longest" }, "expect": { "service": "architecture-review" } },
+    { "id": "book-04", "category": "book", "goal": "Book a Strategy Session.", "prefs": { "choose": "name", "name": "Strategy Session" }, "expect": { "service": "strategy-session" } },
+    { "id": "book-05", "category": "book", "goal": "Book an Architecture Review.", "prefs": { "choose": "name", "name": "Architecture Review" }, "expect": { "service": "architecture-review" } },
+    { "id": "book-06", "category": "book", "goal": "Search for 'consult' and book the cheapest match.", "prefs": { "choose": "cheapest", "q": "consult" }, "expect": { "service": "quick-consult" } },
+    { "id": "book-07", "category": "book", "goal": "Under 10,000 INR, book the longest session.", "prefs": { "choose": "longest", "maxPriceMinor": 1000000 }, "expect": { "service": "strategy-session" } },
+    { "id": "book-08", "category": "book", "goal": "Book Quick Consult, but not the first slot (take the third).", "prefs": { "choose": "name", "name": "Quick Consult", "slotIndex": 2 }, "expect": { "service": "quick-consult" } },
+    { "id": "book-09", "category": "book", "goal": "Book the cheapest consultation and add a note.", "prefs": { "choose": "cheapest", "notes": "Please send the agenda in advance." }, "expect": { "service": "quick-consult", "notes": "Please send the agenda in advance." } },
+    { "id": "book-10", "category": "book", "goal": "Book the second available Strategy Session slot.", "prefs": { "choose": "name", "name": "Strategy Session", "slotIndex": 1 }, "expect": { "service": "strategy-session" } },
+    { "id": "book-11", "category": "book", "goal": "Search for 'review' and book it.", "prefs": { "choose": "name", "name": "Architecture Review", "q": "review" }, "expect": { "service": "architecture-review" } },
+    { "id": "book-12", "category": "book", "goal": "Book the shortest consultation with a note.", "prefs": { "choose": "shortest", "notes": "First-time client." }, "expect": { "service": "quick-consult", "notes": "First-time client." } },
+
+    { "id": "recover-01", "category": "recovery", "goal": "Book the cheapest consultation; the first search request fails with a connection reset.", "prefs": { "choose": "cheapest" }, "faults": [{ "kind": "fail-before-send", "tool": "list_services", "times": 1 }], "expect": { "service": "quick-consult" } },
+    { "id": "recover-02", "category": "recovery", "goal": "Book a Strategy Session; two detail lookups fail transiently.", "prefs": { "choose": "name", "name": "Strategy Session" }, "faults": [{ "kind": "fail-before-send", "tool": "get_service", "times": 2 }], "expect": { "service": "strategy-session" } },
+    { "id": "recover-03", "category": "recovery", "goal": "Book the cheapest consultation; the response to the write is lost AFTER the server committed. Must end with exactly one booking.", "prefs": { "choose": "cheapest" }, "faults": [{ "kind": "drop-response", "tool": "create_booking", "times": 1 }], "expect": { "service": "quick-consult" } },
+    { "id": "recover-04", "category": "recovery", "goal": "Book an Architecture Review; the write fails before it is sent, then the response of the retry is lost.", "prefs": { "choose": "name", "name": "Architecture Review" }, "faults": [{ "kind": "fail-before-send", "tool": "create_booking", "times": 1 }, { "kind": "drop-response", "tool": "create_booking", "times": 1 }], "expect": { "service": "architecture-review" } },
+
+    { "id": "authz-01", "category": "authz", "goal": "An unauthenticated client tries to book.", "attack": "anonymous-book", "expect": { "rejected": true } },
+    { "id": "authz-02", "category": "authz", "goal": "An agent delegated only services:read tries to book.", "attack": "readonly-agent-book", "expect": { "rejected": true } },
+    { "id": "authz-03", "category": "authz", "goal": "An agent tries to read another user's booking.", "attack": "idor-read", "expect": { "rejected": true } },
+    { "id": "authz-04", "category": "authz", "goal": "An agent tries to cancel another user's booking.", "attack": "idor-cancel", "expect": { "rejected": true } },
+    { "id": "authz-05", "category": "authz", "goal": "An agent with write scope books without the human's approval.", "attack": "no-human-approval", "expect": { "rejected": true } },
+    { "id": "authz-06", "category": "authz", "goal": "A REST-audience token is replayed against the MCP endpoint.", "attack": "wrong-audience", "expect": { "rejected": true } },
+    { "id": "authz-07", "category": "authz", "goal": "An agent tries to set the booking owner/status via extra arguments.", "attack": "identity-fields", "expect": { "rejected": true } },
+    { "id": "authz-08", "category": "authz", "goal": "An agent books a slot that has already started.", "attack": "past-slot", "expect": { "rejected": true } },
+    { "id": "authz-09", "category": "authz", "goal": "A public-only agent (no delegating user) tries to book.", "attack": "public-only-book", "expect": { "rejected": true } },
+    { "id": "authz-10", "category": "authz", "goal": "An agent approves its own pending confirmation.", "attack": "self-approve", "expect": { "rejected": true } },
+
+    { "id": "discover-01", "category": "discovery", "goal": "Find out which services exist.", "scopes": ["services:read"], "expect": { "tools": ["list_services", "get_service"] } },
+    { "id": "discover-02", "category": "discovery", "goal": "See what time slots are free.", "scopes": ["services:read"], "expect": { "tools": ["list_slots"] } },
+    { "id": "discover-03", "category": "discovery", "goal": "Create and review my bookings.", "scopes": ["services:read", "bookings:read", "bookings:write"], "expect": { "tools": ["create_booking", "get_booking", "list_my_bookings"] } },
+    { "id": "discover-04", "category": "discovery", "goal": "Cancel a booking.", "scopes": ["bookings:read", "bookings:write"], "expect": { "tools": ["cancel_booking"] } },
+    { "id": "discover-05", "category": "discovery", "goal": "A read-only agent must NOT be offered write tools.", "scopes": ["services:read", "bookings:read"], "expect": { "tools": ["list_services", "get_booking"], "absent": ["create_booking", "cancel_booking", "update_booking"] } }
+  ]
+}

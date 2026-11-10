@@ -10,6 +10,7 @@ import { PrismaClient } from "@/generated/prisma/client";
 import { ANONYMOUS, type UserActor } from "@/core/auth";
 import { nullLogger } from "@/core/logging";
 import { createPrismaRuntime } from "@/runtime";
+import { PG_POOL_OPTIONS } from "@/core/db";
 
 const url = process.env.DATABASE_URL_TEST;
 const H = 3600_000;
@@ -32,7 +33,7 @@ describe.skipIf(!url)("bookings against Postgres", () => {
   const activeCount = (slotId: string) => db.booking.count({ where: { slotId, status: { not: "cancelled" } } });
 
   beforeAll(async () => {
-    db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
+    db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url!, ...PG_POOL_OPTIONS }) });
   });
   afterAll(async () => {
     await db?.$disconnect();
