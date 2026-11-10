@@ -260,3 +260,5 @@ Severity: 1 moderate
 ```
 
 Not verified: `docker build` (engine hung, Podman VM crashed), hadolint, Trivy/Grype results, `promtool test rules`, collector `validate`, Grafana rendering, rollback rehearsal, backups/restore, load test.
+
+Re-run after rebasing onto main (REST v1 + frontend landed): `pnpm lint` clean · `pnpm tsc --noEmit` exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 22 passed (22), Tests 207 passed (207) · `pnpm build` → Compiled successfully, Finished TypeScript. CI e2e job now runs `pnpm test:e2e` (Playwright config exists on main); not yet run on GitHub.
