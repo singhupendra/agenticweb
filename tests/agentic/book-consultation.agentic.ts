@@ -51,7 +51,7 @@ describe("book a consultation over MCP (real app, real DB)", () => {
     const client = await ch.mcp(await ch.agentToken());
     const slot = await ch.freshSlot("strategy-session");
     const key = newKey("agent");
-    const args = { orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: key, confirm: true };
+    const args = { orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: key };
     const first = toolJson(await client.callTool({ name: "create_booking", arguments: args }));
     expect(first.code).toBe("confirmation_required");
     await humanApprover(ch)(first.confirmationId);

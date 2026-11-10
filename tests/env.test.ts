@@ -14,5 +14,10 @@ describe("env validation", () => {
     expect(() => loadEnv({ ...base, NODE_ENV: "production" })).toThrow(/AUTH_ISSUER[\s\S]*SESSION_SECRET/);
   });
   it("rejects the mock issuer in production", () => expect(() => loadEnv({ ...prod, MOCK_ISSUER_ENABLED: "true" })).toThrow(/MOCK_ISSUER_ENABLED/));
+  it("defaults to durable stores and refuses in-memory stores in production", () => {
+    expect(loadEnv(base).AUTH_STORES).toBe("postgres");
+    expect(() => loadEnv({ ...prod, AUTH_STORES: "memory" })).toThrow(/AUTH_STORES/);
+    expect(loadEnv({ ...base, AUTH_STORES: "memory" }).AUTH_STORES).toBe("memory");
+  });
   it("rejects a short session secret", () => expect(() => loadEnv({ ...base, SESSION_SECRET: "short" })).toThrow(/SESSION_SECRET/));
 });

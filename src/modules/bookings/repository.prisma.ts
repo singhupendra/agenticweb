@@ -4,12 +4,14 @@ import type { BookingRecord, BookingRepository, ReserveResult } from "./service"
 
 type BookingRow = {
   id: string; slotId: string; userId: string; organizationId: string; status: "pending" | "confirmed" | "cancelled";
-  notes: string | null; createdAt: Date; slot: { serviceId: string };
+  notes: string | null; createdAt: Date; slot: { serviceId: string; startsAt: Date };
 };
 const toRecord = (r: BookingRow): BookingRecord => ({
-  id: r.id, slotId: r.slotId, serviceId: r.slot.serviceId, status: r.status, notes: r.notes,
+  id: r.id, slotId: r.slotId, serviceId: r.slot.serviceId, slotStartsAt: r.slot.startsAt.toISOString(), status: r.status, notes: r.notes,
   createdAt: r.createdAt.toISOString(), userId: r.userId, organizationId: r.organizationId,
 });
+/** Slot facts every booking output needs (service + start time). */
+const SLOT_INCLUDE = { slot: { select: { serviceId: true, startsAt: true } } } as const;
 const isUniqueViolation = (e: unknown) => typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002";
 
 export function createPrismaBookingRepository(db: PrismaClient): BookingRepository {
@@ -56,7 +58,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
           if (taken >= slot.capacity) return { ok: false, reason: "full" } as const;
           const b = await tx.booking.create({
             data: { organizationId: q.organizationId, slotId: q.slotId, userId: q.userId, status: "confirmed", notes: q.notes ?? null },
-            include: { slot: { select: { serviceId: true } } },
+            include: SLOT_INCLUDE,
           });
           return { ok: true, booking: toRecord(b) } as const;
         });
@@ -67,14 +69,14 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
     },
 
     async findById(organizationId, bookingId) {
-      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true } } } });
+      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: SLOT_INCLUDE });
       return b && toRecord(b);
     },
 
     async listByUser(organizationId, userId, { offset, limit, status, sort }) {
       const where = { organizationId, userId, ...(status ? { status } : {}) };
       const [rows, total] = await Promise.all([
-        db.booking.findMany({ where, orderBy: [{ createdAt: sort === "createdAt" ? "asc" : "desc" }, { id: "asc" }], skip: offset, take: limit, include: { slot: { select: { serviceId: true } } } }),
+        db.booking.findMany({ where, orderBy: [{ createdAt: sort === "createdAt" ? "asc" : "desc" }, { id: "asc" }], skip: offset, take: limit, include: SLOT_INCLUDE }),
         db.booking.count({ where }),
       ]);
       return { items: rows.map(toRecord), total };
@@ -83,7 +85,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
     async updateNotes({ organizationId, bookingId, notes }) {
       // Conditional UPDATE: a concurrent cancel can never be overwritten by an edit.
       const r = await db.booking.updateMany({ where: { id: bookingId, organizationId, status: { not: "cancelled" } }, data: { notes } });
-      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true } } } });
+      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: SLOT_INCLUDE });
       if (!b) return { ok: false, reason: "not_found" };
       if (r.count === 1) return { ok: true, booking: toRecord(b) };
       return { ok: false, reason: "cancelled" };
@@ -98,7 +100,7 @@ export function createPrismaBookingRepository(db: PrismaClient): BookingReposito
           AND b."slotId" = s.id AND b.status <> 'cancelled' AND s."startsAt" > ${now}
         RETURNING b.id`;
       // Read back to return the row and classify a no-op (unknown / already cancelled / slot started).
-      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: { slot: { select: { serviceId: true, startsAt: true } } } });
+      const b = await db.booking.findFirst({ where: { id: bookingId, organizationId }, include: SLOT_INCLUDE });
       if (!b) return { ok: false, reason: "not_found" };
       if (updated.length === 1 || b.status === "cancelled") return { ok: true, booking: toRecord(b) };
       return { ok: false, reason: "started" };

@@ -7,3 +7,6 @@ export * from "./session";
 export * from "./resolve-actor";
 export * from "./well-known";
 export { MockIssuer, getMockIssuer } from "./mock-issuer";
+export * from "./oidc";
+export { MockOidcProvider, getMockOidc, DEV_IDENTITIES } from "./mock-oidc";
+export { createOidcHandlers, getOidcHandlers, type OidcHandlerDeps } from "./oidc-http";

@@ -130,3 +130,46 @@ model AuditEvent {
   @@index([organizationId, occurredAt])
   @@index([capability, occurredAt])
 }
+
+// Durable auth/security stores (migration 20261112000000_durable_auth_stores). See src/core/db/auth-stores.ts.
+model AgentGrant {
+  grantId   String    @id
+  userId    String
+  clientId  String
+  scopes    String[]
+  createdAt DateTime  @default(now()) @db.Timestamptz
+  revokedAt DateTime? @db.Timestamptz
+
+  @@index([userId])
+}
+
+// Also in the migration (not modelled): CHECK status IN ('pending','approved','consumed','denied').
+model AgentConfirmation {
+  id         String   @id @db.Uuid
+  subject    String
+  userId     String
+  capability String
+  inputHash  String
+  preview    String
+  status     String   @default("pending")
+  expiresAt  DateTime @db.Timestamptz
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([subject, status, expiresAt])
+  @@index([expiresAt])
+}
+
+model RateLimitWindow {
+  key     String   @id
+  count   Int
+  resetAt DateTime @db.Timestamptz
+
+  @@index([resetAt])
+}
+
+model ReplayEntry {
+  id        String   @id
+  expiresAt DateTime @db.Timestamptz
+
+  @@index([expiresAt])
+}

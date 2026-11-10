@@ -26,6 +26,8 @@ export interface ExecutorOptions<Deps> {
 export interface InvokeOptions {
   requestId?: string;
   idempotencyKey?: string;
+  /** Caller deadline. Checked before the capability runs (a call aborted before it started never executes); once a mutation has begun it is allowed to finish and be recorded. */
+  signal?: AbortSignal;
 }
 
 export interface CapabilityExecutor {
@@ -42,7 +44,7 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
       const cap: AnyCapability<Deps> | undefined = o.registry.get(name);
       if (!cap) throw notFound("Capability");
       const logger = o.logger.child({ requestId, capability: name });
-      const ctx: CapabilityContext<Deps> = { actor, requestId, now: clock(), deps: o.deps, logger };
+      const ctx: CapabilityContext<Deps> = { actor, requestId, now: clock(), deps: o.deps, logger, signal: opts.signal };
 
       const audit = async (outcome: "success" | "denied" | "error", extra: { resource?: ResourceRef | null; detail?: Record<string, unknown> } = {}) => {
         if (!cap.mutating && outcome === "success") return; // reads are not audited on success
@@ -101,6 +103,10 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
         }
 
         try {
+          if (opts.signal?.aborted) {
+            // Nothing has run yet: surface the caller's deadline; the claim is released below so a retry works.
+            throw opts.signal.reason instanceof AppError ? opts.signal.reason : new AppError("timeout", "The request was aborted before it started.");
+          }
           // 4. Execute + output validation (strips undeclared fields: no accidental data leaks)
           const result = await cap.execute(ctx, input);
           const out = cap.output.safeParse(result);

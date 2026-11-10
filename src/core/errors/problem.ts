@@ -19,6 +19,7 @@ export const ERROR_CODES = {
   payload_too_large: { status: 413, title: "Request body too large" },
   unsupported_media_type: { status: 415, title: "Unsupported media type" },
   method_not_allowed: { status: 405, title: "Method not allowed" },
+  login_failed: { status: 400, title: "Sign-in failed" },
   rate_limited: { status: 429, title: "Too many requests" },
   confirmation_required: { status: 428, title: "Human confirmation required" },
   timeout: { status: 504, title: "Operation timed out" },
@@ -47,7 +48,18 @@ export const ProblemDetailsSchema = z.object({
 });
 export type ProblemDetails = z.infer<typeof ProblemDetailsSchema>;
 
+/**
+ * Cross-copy brand. Next.js (dev/Turbopack) can load one copy of this module per route, while singletons on `globalThis`
+ * (gate, stores) are created by whichever copy ran first; a plain `instanceof` would then misclassify their errors as 500s.
+ */
+const BRAND = Symbol.for("agenticweb.AppError");
+
 export class AppError extends Error {
+  readonly [BRAND] = true;
+  static override [Symbol.hasInstance](v: unknown): boolean {
+    if (this !== AppError) return Function.prototype[Symbol.hasInstance].call(this, v); // subclasses: ordinary prototype check
+    return typeof v === "object" && v !== null && (v as Record<symbol, unknown>)[BRAND] === true;
+  }
   readonly code: ErrorCode;
   readonly status: number;
   readonly errors?: FieldIssue[];

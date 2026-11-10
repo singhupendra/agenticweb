@@ -44,4 +44,10 @@ export async function getBooking(actor: Actor, bookingId: string): Promise<Booki
   return invoke("bookings.get", actor, { orgSlug: orgSlug(), bookingId });
 }
 
+export const MY_BOOKINGS_PAGE_SIZE = 10;
+export async function listMyBookings(actor: Actor, page: number): Promise<{ items: Booking[]; total: number; page: number; pageSize: number }> {
+  const { data, meta } = await getRuntime().executor.invoke("bookings.list", actor, { orgSlug: orgSlug(), page, pageSize: MY_BOOKINGS_PAGE_SIZE });
+  return { items: data as Booking[], total: meta.total ?? 0, page: meta.page ?? page, pageSize: meta.pageSize ?? MY_BOOKINGS_PAGE_SIZE };
+}
+
 export const isNotFound = (e: unknown) => e instanceof AppError && (e.code === "not_found" || e.code === "validation_failed");

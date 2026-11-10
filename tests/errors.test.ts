@@ -28,3 +28,23 @@ describe("envelope", () => {
   it("lifts pagination into meta", () =>
     expect(toEnvelope({ items: [1], page: 2, pageSize: 5, total: 9 }, "r")).toEqual({ data: [1], meta: { requestId: "r", page: 2, pageSize: 5, total: 9 } }));
 });
+
+describe("AppError identity survives duplicated module instances (Next dev/Turbopack loads one copy per route)", () => {
+  it("an AppError built by another copy of the module is still `instanceof AppError` and maps to its own status", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const other = await import("@/core/errors");
+    expect(other.AppError).not.toBe(AppError); // really a second class object
+    const foreign = new other.AppError("confirmation_required", "x", { headers: { "x-confirmation-id": "abc" } });
+    expect(foreign instanceof AppError).toBe(true);
+    expect(toProblem(foreign).status).toBe(428);
+    expect(problemResponse(foreign).headers.get("x-confirmation-id")).toBe("abc");
+  });
+  it("plain errors and look-alikes without the brand are not AppErrors; subclasses keep normal instanceof", () => {
+    expect(new Error("x") instanceof AppError).toBe(false);
+    expect({ code: "forbidden", status: 403, name: "AppError" } instanceof AppError).toBe(false);
+    class Sub extends AppError {}
+    expect(new AppError("forbidden") instanceof Sub).toBe(false);
+    expect(new Sub("forbidden") instanceof Sub).toBe(true);
+  });
+});

@@ -46,7 +46,7 @@ async function attack(ch: Channels, kind: string): Promise<{ rejected: boolean; 
   const txt = (r: Json) => toolJson(r);
   const approve = humanApprover(ch);
   const slot = await ch.freshSlot("quick-consult");
-  const args = (extra: Json = {}) => ({ orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: newKey("eval"), confirm: true, ...extra });
+  const args = (extra: Json = {}) => ({ orgSlug: ORG_SLUG, slotId: slot.id, idempotencyKey: newKey("eval"), ...extra });
   /** Run a write to its end, approving the gate as the human would; resolves to the final outcome. */
   const drive = async (c: McpClient, a: Json, approver = CUSTOMER_ID): Promise<{ ok: boolean; code?: string }> => {
     let r = await c.callTool({ name: "create_booking", arguments: a }).catch((e: Error) => ({ isError: true, content: [{ type: "text", text: JSON.stringify({ code: "protocol", detail: e.message }) }] }));
@@ -67,8 +67,8 @@ async function attack(ch: Channels, kind: string): Promise<{ rejected: boolean; 
       await ch.ensureOtherUser();
       const c = await ch.mcp(await ch.agentToken(["bookings:read", "bookings:write"], OTHER_ID));
       if (kind === "idor-read") { const r = await c.callTool({ name: "get_booking", arguments: { orgSlug: ORG_SLUG, bookingId: mine.id } }); return { rejected: !!r.isError && txt(r).code === "not_found", detail: txt(r).code ?? "returned data" }; }
-      let r = await c.callTool({ name: "cancel_booking", arguments: { orgSlug: ORG_SLUG, bookingId: mine.id, idempotencyKey: newKey("eval"), confirm: true } });
-      if (r.isError && txt(r).code === "confirmation_required") { await humanApprover(ch, OTHER_ID)(txt(r).confirmationId); r = await c.callTool({ name: "cancel_booking", arguments: { orgSlug: ORG_SLUG, bookingId: mine.id, idempotencyKey: newKey("eval"), confirm: true, confirmationId: txt(r).confirmationId } }); }
+      let r = await c.callTool({ name: "cancel_booking", arguments: { orgSlug: ORG_SLUG, bookingId: mine.id, idempotencyKey: newKey("eval") } });
+      if (r.isError && txt(r).code === "confirmation_required") { await humanApprover(ch, OTHER_ID)(txt(r).confirmationId); r = await c.callTool({ name: "cancel_booking", arguments: { orgSlug: ORG_SLUG, bookingId: mine.id, idempotencyKey: newKey("eval"), confirmationId: txt(r).confirmationId } }); }
       const still = (await ch.bookingsFor(CUSTOMER_ID)).find((b) => b.id === mine.id)!.status === "confirmed";
       return { rejected: !!r.isError && still, detail: `${txt(r).code}; booking ${still ? "intact" : "CANCELLED"}` };
     }

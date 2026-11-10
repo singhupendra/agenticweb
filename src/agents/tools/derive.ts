@@ -16,14 +16,12 @@ export interface McpToolDescriptor {
 }
 
 export const IDEMPOTENCY_ARG = "idempotencyKey";
-/** Every mutating tool needs the human's explicit approval of this exact action; the model sets it only after asking. */
-export const CONFIRM_ARG = "confirm";
 /** Out-of-band human approval id (`AgentConfirmationGate`): returned by a first attempt, approved by the user, then passed on retry. */
 export const CONFIRMATION_ID_ARG = "confirmationId";
 
 export interface ListToolsOptions {
-  /** Add the required `confirm` argument to mutating tools (remote MCP: no UI of our own to ask the human; WebMCP confirms in the browser). */
-  requireConfirm?: boolean;
+  /** Remote MCP: writes need a human-bound out-of-band confirmation (see `AgentConfirmationGate`), so advertise `confirmationId`. */
+  humanConfirmation?: boolean;
 }
 
 export function listTools<Deps>(registry: CapabilityRegistry<Deps>, actor: Actor, opts: ListToolsOptions = {}): McpToolDescriptor[] {
@@ -40,12 +38,7 @@ export function listTools<Deps>(registry: CapabilityRegistry<Deps>, actor: Actor
           description: "Unique key for this action (8-128 chars). Reuse the SAME key when retrying; never reuse it for a different action.",
         };
         const extra = [IDEMPOTENCY_ARG];
-        if (opts.requireConfirm) {
-          props[CONFIRM_ARG] = {
-            type: "boolean", const: true,
-            description: "Set to true ONLY after the human user has explicitly approved this exact action in this conversation.",
-          };
-          extra.push(CONFIRM_ARG);
+        if (opts.humanConfirmation) {
           props[CONFIRMATION_ID_ARG] = {
             type: "string", minLength: 8, maxLength: 64, pattern: "^[A-Za-z0-9-]+$",
             description: "Only after a call returned `confirmation_required`: its confirmationId once the user has approved it. Retry with identical arguments.",
