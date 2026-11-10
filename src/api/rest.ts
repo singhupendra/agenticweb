@@ -28,6 +28,8 @@ export interface RestDeps {
   gate?: () => AgentConfirmationGate;
   maxBodyBytes?: () => number;
   trustProxy?: () => boolean;
+  /** Budget (per minute) for failed-auth attempts and anonymous callers. */
+  anonLimit?: () => number;
   appUrl?: () => string;
 }
 
@@ -38,6 +40,7 @@ const DEFAULT_DEPS: RestDeps = {
   gate: getAgentGate,
   maxBodyBytes: () => getEnv().MAX_BODY_BYTES,
   trustProxy: () => getEnv().TRUST_PROXY,
+  anonLimit: () => getEnv().RATE_LIMIT_ANON_PER_MIN,
   appUrl: () => getEnv().APP_URL,
 };
 
@@ -56,12 +59,14 @@ export function createRestHandler(capabilityName: string, deps: RestDeps = DEFAU
       try {
         actor = await deps.resolver().resolve(request);
       } catch (e) {
-        await limiter?.consume(anonKey); // failed-auth floods are throttled per client
+        // Failed-auth floods are throttled in their OWN bucket at the anonymous limit, so they can never
+        // exhaust the budget of legitimate anonymous callers (or the authenticated default).
+        await limiter?.consume(`authfail:${anonKey}`, deps.anonLimit?.());
         throw e;
       }
       if (limiter) {
         const anonymous = actor.kind === "anonymous";
-        const limit = anonymous ? getEnv().RATE_LIMIT_ANON_PER_MIN : undefined;
+        const limit = anonymous ? deps.anonLimit?.() : undefined;
         await limiter.consume(anonymous ? anonKey : actorSubject(actor), limit);
       }
       let body: unknown = {};

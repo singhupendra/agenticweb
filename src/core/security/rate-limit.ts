@@ -18,23 +18,20 @@ export class InMemoryRateLimitStore implements RateLimitStore {
   async hit(key: string, windowMs: number, now: number) {
     let w = this.windows.get(key);
     if (!w || w.resetAt <= now) {
-      this.evict(now);
+      if (!w && this.windows.size >= (this.opts.maxKeys ?? 10_000)) {
+        this.sweep(now);
+        // Still full of live windows: FAIL CLOSED for new keys. Evicting live windows would let key churn reset a
+        // counter (attacker or victim), so overflow keys are rejected instead and nothing is stored.
+        if (this.windows.size >= (this.opts.maxKeys ?? 10_000)) return { count: Number.MAX_SAFE_INTEGER, resetAt: now + windowMs };
+      }
       w = { count: 0, resetAt: now + windowMs };
       this.windows.set(key, w);
     }
     w.count += 1;
     return { count: w.count, resetAt: w.resetAt };
   }
-  /** Bounded memory: drop expired windows, then the oldest, so an attacker cannot grow the map without limit. */
-  private evict(now: number) {
-    const max = this.opts.maxKeys ?? 10_000;
-    if (this.windows.size < max) return;
+  private sweep(now: number) {
     for (const [k, w] of this.windows) if (w.resetAt <= now) this.windows.delete(k);
-    while (this.windows.size >= max) {
-      const oldest = this.windows.keys().next().value;
-      if (oldest === undefined) break;
-      this.windows.delete(oldest);
-    }
   }
 }
 

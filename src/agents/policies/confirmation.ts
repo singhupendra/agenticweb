@@ -15,6 +15,7 @@ import { hashInput } from "@/core/logging";
 export const TRANSACTIONAL_SCOPES: readonly Scope[] = ["bookings:write"];
 export const CONFIRMATION_HEADER = "x-confirmation-id";
 const DEFAULT_TTL_MS = 5 * 60_000;
+const MAX_PENDING_PER_SUBJECT = 10;
 
 interface Confirmation {
   id: string;
@@ -27,7 +28,10 @@ interface Confirmation {
 }
 
 export interface ConfirmationStore {
-  create(c: Confirmation): Promise<void>;
+  /** Must evict expired entries and refuse (throw) when a global bound is hit. */
+  create(c: Confirmation, now: number): Promise<void>;
+  /** Live (unexpired, pending) confirmations for a subject, used for the per-subject cap. */
+  countPending(subject: string, now: number): Promise<number>;
   get(id: string): Promise<Confirmation | null>;
   /** Atomic compare-and-set; returns false if the current status is not `from`. */
   transition(id: string, from: Confirmation["status"], to: Confirmation["status"]): Promise<boolean>;
@@ -35,8 +39,21 @@ export interface ConfirmationStore {
 
 export class InMemoryConfirmationStore implements ConfirmationStore {
   private readonly m = new Map<string, Confirmation>();
-  async create(c: Confirmation) {
+  constructor(private readonly maxEntries = 10_000) {}
+  async create(c: Confirmation, now: number) {
+    if (this.m.size >= this.maxEntries) {
+      for (const [k, v] of this.m) if (v.expiresAt <= now) this.m.delete(k);
+      if (this.m.size >= this.maxEntries) throw new AppError("rate_limited", "Too many pending confirmations.", { headers: { "retry-after": "60" } });
+    }
     this.m.set(c.id, { ...c });
+  }
+  async countPending(subject: string, now: number) {
+    let n = 0;
+    for (const [k, v] of this.m) {
+      if (v.expiresAt <= now) this.m.delete(k); // lazy expiry sweep
+      else if (v.subject === subject && v.status === "pending") n++;
+    }
+    return n;
   }
   async get(id: string) {
     const c = this.m.get(id);
@@ -77,11 +94,15 @@ export class AgentConfirmationGate {
     if (!this.requires(actor, cap)) return;
     const inputHash = hashInput(input);
     if (!confirmationId) {
+      const subject = actorSubject(actor);
+      if ((await this.store.countPending(subject, this.now())) >= MAX_PENDING_PER_SUBJECT) {
+        throw new AppError("rate_limited", "Too many unapproved actions are pending.", { headers: { "retry-after": "60" } });
+      }
       const id = randomUUID();
       await this.store.create({
         id, subject: actorSubject(actor), userId: effectiveUserId(actor) as string, capability: cap.name, inputHash,
         expiresAt: this.now() + this.ttlMs, status: "pending",
-      });
+      }, this.now());
       throw new AppError("confirmation_required", "The user must approve this action before it can proceed.", {
         headers: { [CONFIRMATION_HEADER]: id },
       });

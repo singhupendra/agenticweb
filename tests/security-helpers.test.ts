@@ -28,11 +28,22 @@ describe("rate limiter", () => {
     t.now += 60_001;
     await expect(limiter.consume("k")).resolves.toBeDefined();
   });
-  it("store is pluggable and bounded", async () => {
+  it("store is bounded, and key churn can never reset an existing counter (fails closed when full)", async () => {
     const store = new InMemoryRateLimitStore({ maxKeys: 2 });
-    const limiter = createRateLimiter({ store, limit: 5, windowMs: 1000, now: () => 1 });
-    await limiter.consume("a"); await limiter.consume("b"); await limiter.consume("c");
+    const limiter = createRateLimiter({ store, limit: 2, windowMs: 1000, now: () => 1 });
+    await limiter.consume("victim"); await limiter.consume("victim");
+    await limiter.consume("b");
+    for (let i = 0; i < 50; i++) await expect(limiter.consume(`churn-${i}`)).rejects.toMatchObject({ code: "rate_limited" });
     expect(store.size).toBeLessThanOrEqual(2);
+    await expect(limiter.consume("victim")).rejects.toMatchObject({ code: "rate_limited" }); // counter survived the churn
+  });
+  it("expired windows are reclaimed so a full store recovers", async () => {
+    const t = { now: 1 };
+    const limiter = createRateLimiter({ store: new InMemoryRateLimitStore({ maxKeys: 1 }), limit: 1, windowMs: 1000, now: () => t.now });
+    await limiter.consume("a");
+    await expect(limiter.consume("b")).rejects.toMatchObject({ code: "rate_limited" });
+    t.now = 2000;
+    await expect(limiter.consume("b")).resolves.toBeDefined();
   });
   it("clientKey ignores x-forwarded-for unless proxy is trusted", () => {
     const req = new Request("http://x", { headers: { "x-forwarded-for": "9.9.9.9, 1.1.1.1" } });

@@ -44,7 +44,7 @@ Transactional scopes (`TRANSACTIONAL_SCOPES = ["bookings:write"]`, `src/agents/p
 2. The delegating **human** approves: `POST /api/confirmations/{id}/approve` (session cookie + CSRF, or a user bearer token). Agents, other users and admins-for-others cannot approve.
 3. Agent retries the **identical** request with `x-confirmation-id`. A confirmation is bound to (agent subject, capability, input hash), expires after 5 min and is **single use** (replay ⇒ 403). The normal `Idempotency-Key` still applies.
 
-Store is in-memory (`ConfirmationStore` is pluggable; **gap: not durable across restarts/instances**).
+Abuse bounds: max 10 pending confirmations per agent subject (429 beyond), expired entries are evicted, global cap 10 000. Store is in-memory (`ConfirmationStore` is pluggable; **gap: not durable across restarts/instances**).
 
 ## Protected Resource Metadata & challenges (RFC 9728 / MCP)
 Checked against the **current MCP authorization spec (draft, fetched 2026-11-10; builds on OAuth 2.1 draft-13, RFC 9728, RFC 8707, RFC 6750)**:
@@ -58,7 +58,7 @@ Checked against the **current MCP authorization spec (draft, fetched 2026-11-10;
 
 ## Rate limiting, size limits, replay
 `src/core/security/`:
-* `createRateLimiter({store, limit, windowMs})` + `InMemoryRateLimitStore` (bounded, pluggable `RateLimitStore` for Redis/Postgres). REST: per subject (`RATE_LIMIT_AUTH_PER_MIN`, default 240) and per client for anonymous (`RATE_LIMIT_ANON_PER_MIN`, 60); failed authentications consume the client budget. Anonymous clients are keyed by `x-forwarded-for` **only if `TRUST_PROXY=true`**, else one shared bucket (set it behind a trusted proxy). 429 + `Retry-After` + `RateLimit-*` headers. In-memory ⇒ per-instance limits.
+* `createRateLimiter({store, limit, windowMs})` + `InMemoryRateLimitStore` (bounded, pluggable `RateLimitStore` for Redis/Postgres). REST: per subject (`RATE_LIMIT_AUTH_PER_MIN`, default 240) and per client for anonymous (`RATE_LIMIT_ANON_PER_MIN`, 60); failed authentications consume a separate `authfail:<client>` bucket at the anonymous limit, so a bad-token flood cannot exhaust legitimate anonymous budgets. The in-memory store is bounded and **fails closed**: when full of live windows, new keys are rejected (429) instead of evicting live counters, so key churn cannot reset a limit. Anonymous clients are keyed by `x-forwarded-for` **only if `TRUST_PROXY=true`**, else all anonymous callers share one bucket (`ip:unknown`) — one noisy anonymous client can then throttle the others, so **set `TRUST_PROXY=true` behind a trusted proxy that overwrites the header**. 429 + `Retry-After` + `RateLimit-*` headers. In-memory ⇒ per-instance limits.
 * `readBodyWithLimit(request, maxBytes, {requireJson})`: counts streamed bytes (content-length can lie), 413 / 415. REST uses `MAX_BODY_BYTES` (default 64 KiB).
 * `ReplayGuard.consume(jti, expiresAt)`: single-use ids. Access tokens are reusable bearer credentials by design (bounded by short `exp`, audience, grant revocation); single-use semantics apply to confirmations (and are available for nonces/one-time tokens).
 * Errors are generic problem+json: no verification internals, no stack traces; 401 detail is "The access token is invalid/has expired."

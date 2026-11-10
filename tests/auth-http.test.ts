@@ -150,6 +150,17 @@ describe("agent confirmation for transactional scopes", () => {
   });
 });
 
+describe("confirmation store is bounded", () => {
+  it("caps pending confirmations per subject (429) and evicts expired ones", async () => {
+    const t = await agentTok();
+    const ask = (n: number) => call("bookings.create", { ...bearer(t), "idempotency-key": `create-key-${String(n).padStart(4, "0")}` }, { method: "POST", body: { slotId: SLOTS.one.id, notes: `n${n}` } });
+    for (let i = 0; i < 10; i++) expect((await ask(i)).status).toBe(428);
+    expect((await ask(99)).status).toBe(429);
+    clock.now = new Date(NOW.getTime() + 6 * 60_000); // all expired
+    expect((await call("bookings.create", { ...bearer(await agentTok()), "idempotency-key": "create-key-1000" }, { method: "POST", body: { slotId: SLOTS.one.id } })).status).toBe(428);
+  });
+});
+
 describe("cookie sessions through the adapter", () => {
   it("session user can book with CSRF token; without it the mutation is refused before execution", async () => {
     const { setCookie, csrfToken } = await kit.sessions.create({ userId: USER_ID, organizationId: ORG_ID, role: "user" });
@@ -176,9 +187,15 @@ describe("rate limits and request-size limits", () => {
   });
   it("failed authentication attempts also consume the client's budget", async () => {
     const limiter = createRateLimiter({ store: new InMemoryRateLimitStore(), limit: 2, windowMs: 60_000, now: () => 1 });
-    const d = { limiter: () => limiter };
+    const d = { limiter: () => limiter, anonLimit: () => 2 };
     for (let i = 0; i < 2; i++) expect((await call("bookings.list", bearer("a.b.c"), { deps: d })).status).toBe(401);
     expect((await call("bookings.list", bearer("a.b.c"), { deps: d })).status).toBe(429);
+  });
+  it("failed-auth floods use their own bucket: legitimate anonymous callers are not locked out", async () => {
+    const limiter = createRateLimiter({ store: new InMemoryRateLimitStore(), limit: 2, windowMs: 60_000, now: () => 1 });
+    const d = { limiter: () => limiter, anonLimit: () => 2 };
+    for (let i = 0; i < 3; i++) await call("bookings.list", bearer("a.b.c"), { deps: d });
+    expect((await call("services.list", {}, { deps: d })).status).toBe(200);
   });
   it("oversized body → 413; wrong content-type → 415; malformed JSON → 400", async () => {
     const t = { ...bearer(await userTok()), "idempotency-key": "create-key-0004" };

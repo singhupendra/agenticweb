@@ -160,12 +160,12 @@ $ pnpm tsc --noEmit
 (exit 0)
 $ pnpm test:run
  Test Files  15 passed (15)
-      Tests  252 passed (252)
+      Tests  255 passed (255)
 $ pnpm build
 ✓ Compiled successfully
   Finished TypeScript
 ```
 
-Mutation checks (each removal made ≥1 test fail): audience check, issuer check, grant scope narrowing, grant revocation, agent TTL cap, CSRF check, Origin check, confirmation single-use, confirmation input binding, anyone-can-approve, `resource_metadata` decoration, streamed body cap, failed-auth throttling. Two equivalent mutants survived (explicit `algorithms` pin — jose already rejects by key type; agent-kind approver check — agents have no `userId`), kept as defence in depth.
+Mutation checks (each removal made ≥1 test fail): audience check, issuer check, grant scope narrowing, grant revocation, agent TTL cap, CSRF check, Origin check, confirmation single-use, confirmation input binding, anyone-can-approve, `resource_metadata` decoration, streamed body cap, failed-auth throttling. After AO review, added: separate failed-auth bucket, fail-closed rate-limit store, bounded confirmation store (tests + mutants caught). Two equivalent mutants survived (explicit `algorithms` pin — jose already rejects by key type; agent-kind approver check — agents have no `userId`), kept as defence in depth.
 
 Live (next dev, mock issuer, local Postgres): anonymous → 401 + `resource_metadata`; PRM docs served; user/agent tokens work; agent booking → 428 → human approve → 201 → confirmation replay 403; agent self-approve 403; other user GET booking 404 / owner 200; MCP-audience token on REST 401; expired token 401 (`error_description` "expired"); 70 KB body 413.
