@@ -40,7 +40,7 @@ export default async function ApprovalPage({ params, searchParams }: { params: P
       ) : (
         <>
           <p className="mt-4 text-sm">An AI assistant wants to run <strong data-testid="approval-capability">{view.capability}</strong> on your behalf with these exact details:</p>
-          <pre data-testid="approval-preview" className="mt-3 overflow-x-auto rounded border border-zinc-300 bg-zinc-50 p-3 text-xs">{view.preview}</pre>
+          <pre tabIndex={0} aria-label="Exact action details" data-testid="approval-preview" className="mt-3 overflow-x-auto rounded border border-zinc-300 bg-zinc-50 p-3 text-xs">{view.preview}</pre>
           <p className="mt-2 text-xs text-zinc-600">Status: {view.status} · expires {view.expiresAt}</p>
           {view.status === "pending" ? (
             <form action={decideApprovalAction} className="mt-6 flex gap-3">
