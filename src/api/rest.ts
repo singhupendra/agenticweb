@@ -60,7 +60,7 @@ export function createRestRateLimiting(o: { limiter: RateLimiter; anonLimit: () 
 }
 
 const lim = globalThis as unknown as { __restRateLimiting?: Pick<RestDeps, "rateLimit" | "authFailure"> };
-function defaultRateLimiting() {
+export function defaultRateLimiting() {
   return (lim.__restRateLimiting ??= createRestRateLimiting({
     limiter: createRateLimiter({ store: new InMemoryRateLimitStore(), limit: getEnv().RATE_LIMIT_AUTH_PER_MIN, windowMs: 60_000 }),
     anonLimit: () => getEnv().RATE_LIMIT_ANON_PER_MIN,

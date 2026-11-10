@@ -33,6 +33,8 @@ export interface McpBinding {
   exposed: boolean;
   /** Human/LLM-facing description. STATIC text only: never interpolate user content (tool poisoning). */
   description?: string;
+  /** Surfaced as the MCP `destructiveHint` (e.g. cancel). Default false. */
+  destructive?: boolean;
 }
 
 export interface Capability<I extends z.ZodType = z.ZodType, O extends z.ZodType = z.ZodType, Deps = unknown> {

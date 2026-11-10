@@ -56,6 +56,7 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Slot list on service page | Architect | done | live page shows slots in org timezone |
 | 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
 | 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
+| 4 | Remote MCP server `/mcp` (Streamable HTTP, stateless), tools derived from registry, `update_booking` exposed, confirm+idempotency on writes, sanitised output, 401 challenge, timeout, hooks | Agent Integration | done (rebased on Security PR #5: audience-bound bearer, 401 challenge, confirmation gate, shared rate limits) | `tests/mcp/*`, `docs/mcp-integration.md`, see "MCP verification" |
 | 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
@@ -210,3 +211,20 @@ $ pnpm build
 Mutation checks (each removal made ≥1 test fail): audience check, issuer check, grant scope narrowing, grant revocation, agent TTL cap, CSRF check, Origin check, confirmation single-use, confirmation input binding, anyone-can-approve, `resource_metadata` decoration, streamed body cap, failed-auth throttling. After AO review, added: separate failed-auth bucket, fail-closed rate-limit store, bounded confirmation store (tests + mutants caught). Two equivalent mutants survived (explicit `algorithms` pin — jose already rejects by key type; agent-kind approver check — agents have no `userId`), kept as defence in depth.
 
 Live (next dev, mock issuer, local Postgres): anonymous → 401 + `resource_metadata`; PRM docs served; user/agent tokens work; agent booking → 428 → human approve → 201 → confirmation replay 403; agent self-approve 403; other user GET booking 404 / owner 200; MCP-audience token on REST 401; expired token 401 (`error_description` "expired"); 70 KB body 413.
+### MCP verification (Agent Integration) — Node 24.15.0, local Postgres 16 (throwaway cluster :55437), 2026-11-10
+
+```
+$ pnpm lint            → eslint . (exit 0, no output)
+$ pnpm tsc --noEmit    → exit 0
+$ pnpm test:run        → Test Files  16 passed | 1 skipped (17); Tests  202 passed | 13 skipped (215)
+$ DATABASE_URL_TEST=…/agenticweb_test pnpm test:run → Test Files  17 passed (17); Tests  215 passed (215)
+$ pnpm build           → exit 0; routes incl. ƒ /mcp
+```
+New: `tests/mcp/mcp-server.test.ts` (30 tests, SDK `Client` + `StreamableHTTPClientTransport` over a real `node:http` server), `tests/mcp/sanitize.test.ts` (4). Updated `tests/mcp-tools.test.ts` for the deliberately exposed `update_booking`.
+
+Live (`next dev` + seeded Postgres, SDK client, agent actor with services:read,bookings:read,bookings:write): 9 tools listed; list_services → 3 seeded; create_booking → confirmed; replay same key → same id; new key same slot → `conflict`; get_booking → confirmed; cancel_booking → cancelled; invalid arg → `validation_failed`; anonymous `list_my_bookings` → HTTP 401 `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`. MCP Inspector CLI (`npx @modelcontextprotocol/inspector --cli … --method tools/list` and `tools/call get_organization`) returned the expected tool list / structuredContent.
+
+Shared-file edits (additive): `McpBinding.destructive`, `ERROR_CODES.timeout` (504), `bookings.update` `mcp.exposed: true`, `listTools(..., {requireConfirm})`.
+Rebased on Security PR #5 (95f0fc2): route uses `resolveActor(request,{resource:"mcp"})`, `decorateAuthError`, `getAgentGate()` (agent writes → `confirmation_required` + `confirmationId`/`approveUrl`, retry with `confirmationId`), shared REST rate-limit buckets (`defaultRateLimiting` now exported). Re-verified after rebase: lint clean, `tsc --noEmit` clean, `pnpm test:run` → 22 files passed | 1 skipped; 379 passed | 13 skipped (392).
+Live with mock issuer (`next dev`, seeded Postgres, SDK client + bearer): MCP-audience agent token lists 9 tools; REST-audience token on `/mcp` → 401 `invalid_token` + `resource_metadata`; create_booking → 428 `confirmation_required` + approveUrl; user bearer approves (200); retry with `confirmationId` → `confirmed`; cancel_booking → `confirmation_required`.
+**Gaps:** `confirm=true` is model-asserted (the gate is the hard control, and applies to agents only); OTel is a hook only (`McpDeps.metrics`; DevOps helpers not merged); `claude mcp add` commands not executed against a local Claude config; no stdio/SSE transport, no session resumability (stateless by design); in-memory confirmation/rate-limit stores are per-instance (Security's note).

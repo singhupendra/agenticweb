@@ -8,7 +8,7 @@ describe("MCP tool derivation", () => {
   it("derives a tool for every exposed capability from the registry", () => {
     const tools = listTools(registry, ANONYMOUS);
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "cancel_booking", "create_booking", "get_booking", "get_organization", "get_service", "list_my_bookings", "list_services", "list_slots",
+      "cancel_booking", "create_booking", "get_booking", "get_organization", "get_service", "list_my_bookings", "list_services", "list_slots", "update_booking",
     ]);
     const list = tools.find((t) => t.name === "list_services")!;
     expect(list.inputSchema).toMatchObject({ type: "object", properties: { orgSlug: { type: "string" }, pageSize: expect.any(Object) } });
@@ -22,7 +22,7 @@ describe("MCP tool derivation", () => {
   });
   it("mutating tools require an idempotencyKey argument; read tools do not", () => {
     const tools = listTools(registry, agent(["bookings:write"]));
-    expect(tools.map((t) => t.name).sort()).toEqual(["cancel_booking", "create_booking"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["cancel_booking", "create_booking", "update_booking"]);
     for (const t of tools) expect(t.inputSchema.required).toContain(IDEMPOTENCY_ARG);
     expect(tools.every((t) => t.annotations.readOnlyHint === false)).toBe(true);
   });
