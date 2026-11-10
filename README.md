@@ -12,3 +12,6 @@ pnpm db:up && pnpm db:deploy && pnpm db:seed   # Postgres via docker compose
 pnpm dev
 pnpm lint && pnpm tsc --noEmit && pnpm test:run && pnpm build
 ```
+
+Local Postgres without Docker: `brew install postgresql@16`, create role/db from `.env.example`, then `pnpm db:deploy && pnpm db:seed`.
+Integration tests: `DATABASE_URL_TEST=<url of a migrated, disposable db> pnpm test:run`.

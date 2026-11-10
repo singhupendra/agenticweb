@@ -6,8 +6,16 @@ permissions: { contents: read }
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: agenticweb, POSTGRES_PASSWORD: agenticweb_dev_only, POSTGRES_DB: agenticweb }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agenticweb" --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
+      DATABASE_URL_TEST: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -16,5 +24,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm tsc --noEmit
-      - run: pnpm test:run
+      - run: pnpm db:deploy
+      - run: pnpm test:run   # includes Postgres integration tests (DATABASE_URL_TEST)
       - run: pnpm build

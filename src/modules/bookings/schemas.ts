@@ -1,5 +1,5 @@
 /**
- * CONTRACT ONLY (Phase 2 implements). Single source of truth for slot/booking shapes in REST, MCP and UI.
+ * Slot/booking contracts. Single source of truth for slot/booking shapes in REST, MCP and UI.
  * Rules: organizationId/userId/status are NEVER accepted from input; the actor and server decide them.
  */
 import { z } from "zod";
@@ -41,3 +41,4 @@ export const CreateBookingInput = z.strictObject({
 });
 export const CancelBookingInput = z.strictObject({ orgSlug: slugSchema, bookingId: idSchema });
 export const ListMyBookingsInput = z.strictObject({ orgSlug: slugSchema, ...pageInputShape });
+export const GetBookingInput = z.strictObject({ orgSlug: slugSchema, bookingId: idSchema });

@@ -6,3 +6,4 @@ let client: PrismaClient | undefined;
 export function getPrisma(): PrismaClient {
   return (client ??= new PrismaClient({ adapter: new PrismaPg({ connectionString: getEnv().DATABASE_URL }) }));
 }
+export * from "./stores";
