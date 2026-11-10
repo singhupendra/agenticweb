@@ -25,20 +25,22 @@ export function instrument(client: Client, trace: TraceStep[], faults: Fault[] =
   const remaining = faults.map((f) => ({ ...f }));
   return {
     get retries() { return retries; },
-    async call(name: string, args: Json): Promise<Json> {
+    noteRetry() { retries++; },
+    async call(name: string, args: Json, o: { retry?: boolean } = {}): Promise<Json> {
       for (let attempt = 1; ; attempt++) {
         const t0 = performance.now();
         const fault = remaining.find((f) => f.tool === name && f.times > 0);
         try {
           if (fault?.kind === "fail-before-send") { fault.times--; throw new TransientError("injected: connection reset before request"); }
           const r = await client.callTool({ name, arguments: args });
-          if (fault?.kind === "drop-response") { fault.times--; trace.push({ tool: name, args, ms: performance.now() - t0, ok: !r.isError, attempt }); throw new TransientError("injected: response lost after server executed"); }
+          // drop-response only hits a call that actually SUCCEEDED server-side (a committed write whose reply is lost)
+          if (fault?.kind === "drop-response" && !r.isError) { fault.times--; trace.push({ tool: name, args, ms: performance.now() - t0, ok: !r.isError, attempt }); throw new TransientError("injected: response lost after server executed"); }
           const out = r.isError ? { error: toolJson(r) } : { data: r.structuredContent as Json };
           trace.push({ tool: name, args, ms: performance.now() - t0, ok: !r.isError, code: r.isError ? toolJson(r).code : undefined, attempt });
           return out;
         } catch (e) {
-          if (!(e instanceof TransientError) || attempt >= 4) throw e;
-          if (!(fault?.kind === "drop-response")) trace.push({ tool: name, args, ms: performance.now() - t0, ok: false, code: "transient", attempt });
+          if (!(e instanceof TransientError) || attempt >= 4 || o.retry === false) throw e;
+          if (!(e as Error).message.includes("response lost")) trace.push({ tool: name, args, ms: performance.now() - t0, ok: false, code: "transient", attempt });
           retries++;
         }
       }
@@ -83,12 +85,27 @@ export async function bookConsultation(
   const slot = open[Math.min(o.prefs.slotIndex ?? 0, open.length - 1)];
 
   const args = { orgSlug: ORG_SLUG, slotId: slot.id, ...(o.prefs.notes ? { notes: o.prefs.notes } : {}), idempotencyKey, confirm: true };
-  let attempt = await tools.call("create_booking", args);
+  /**
+   * A write whose outcome is unknown (response lost) is NEVER blindly re-sent: the agent first reconciles by reading its own
+   * bookings (idempotent read). If the booking exists it adopts it; otherwise it retries with the SAME idempotencyKey
+   * (and, because approvals are single-use, a fresh human approval).
+   */
+  const write = async (extra: Json): Promise<Json> => {
+    try { return await tools.call("create_booking", { ...args, ...extra }, { retry: false }); }
+    catch (e) {
+      if (!(e instanceof TransientError)) throw e;
+      tools.noteRetry();
+      const mine = await tools.call("list_my_bookings", { orgSlug: ORG_SLUG, status: "confirmed", pageSize: 50 });
+      const found = mine.data?.items?.find((b: Json) => b.slotId === slot.id);
+      return found ? { data: found } : write({});
+    }
+  };
+  let attempt = await write({});
   let confirmationId: string | undefined;
-  if (attempt.error?.code === "confirmation_required") {
+  for (let round = 0; attempt.error?.code === "confirmation_required" && round < 3; round++) {
     confirmationId = attempt.error.confirmationId;
     await o.approve(confirmationId!); // out-of-band: the human, not the agent
-    attempt = await tools.call("create_booking", { ...args, confirmationId });
+    attempt = await write({ confirmationId });
   }
   if (attempt.error) return res({ ok: false, reason: `create_booking: ${attempt.error.code}`, discovered, service, slot, confirmationId });
   const status = await tools.call("get_booking", { orgSlug: ORG_SLUG, bookingId: attempt.data.id });
