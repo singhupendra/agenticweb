@@ -12,6 +12,7 @@ import { InMemoryRateLimitStore, clientKey, createRateLimiter, readBodyWithLimit
 import { CONFIRMATION_HEADER, getAgentGate, type AgentConfirmationGate } from "@/agents/policies";
 import type { AnyCapability, HttpBinding } from "@/core/capabilities";
 import { registry } from "@/capabilities";
+import { recordAgentRequest, recordAuthzRejection } from "@/observability";
 import { getRuntime, type Runtime } from "@/runtime";
 
 const REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
@@ -184,9 +185,12 @@ export function createRestHandler(capabilityName: string, deps: RestDeps = DEFAU
       try {
         actor = await deps.resolver().resolve(request);
       } catch (e) {
+        recordAgentRequest({ channel: "rest", actorKind: "anonymous" });
+        recordAuthzRejection({ tool: capabilityName, code: "unauthenticated" });
         await deps.authFailure?.(request);
         throw e;
       }
+      recordAgentRequest({ channel: "rest", actorKind: actor.kind });
       await deps.rateLimit?.({ request, actor, capability: capabilityName, requestId });
       const body = BODY_METHODS.has(request.method) ? await readBody(request, deps.maxBodyBytes?.() ?? MAX_BODY_BYTES) : {};
       // Path params win over body/query so callers cannot override identifiers.

@@ -78,6 +78,12 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
 | 6 | Agentic E2E harness (MCP SDK + mock issuer, real app/DB), negative suite, channel parity (MCP/REST/UI), fixed-dataset evals + optional LLM runner, Playwright in CI (isolated DB) | QA | done | `docs/test-report.md` (raw output), `docs/testing.md`; found+fixed non-UTC DB time-zone bug; 2 open gate findings |
 | 4–7 | see phases above | various | todo | — |
+| 6/7 | OpenTelemetry SDK/OTLP bootstrap, `traced()`, agent metrics, executor hook | DevOps | done | `tests/observability/*` (25 tests incl. real OTLP export to a local HTTP sink); live: `next start` standalone exported Next HTTP spans + nested `capability *` spans + agent metrics to a local OTLP sink |
+| 6 | Log redaction (key + value scrubbing) | DevOps | done | `tests/observability/redaction.test.ts` |
+| 6/7 | Grafana dashboard + Prometheus alerts + OTel collector compose profile | DevOps | done (static) | PromQL of 7 alerts + 15 panels parsed with the official lezer-promql parser; YAML parsed. `promtool`/collector `validate` run in CI only (local run of a downloaded binary was blocked) |
+| 7 | Dockerfile (multi-stage, non-root, healthcheck, standalone), compose, deploy/k8s | DevOps | done, **image build unverified locally** | Docker engine hangs; Podman VM crashed mid-build (pnpm install stage completed). Standalone bundle verified natively; hadolint/trivy not available locally — CI job `infra-lint`/`container` is the first real build |
+| 6/7 | CI hardening (audit, Trivy+Grype, SBOM, hadolint/actionlint/promtool; Playwright runs in the QA `agentic` job) | DevOps | done (not yet run on GitHub) | actions pinned to SHAs; `pnpm audit --audit-level=high` exit 0 locally (1 moderate, dev-only) |
+| 3–7 | remaining items | various | todo | — |
 
 ## Verification (Phase 1)
 
@@ -234,6 +240,41 @@ Shared-file edits (additive): `McpBinding.destructive`, `ERROR_CODES.timeout` (5
 Rebased on Security PR #5 (95f0fc2): route uses `resolveActor(request,{resource:"mcp"})`, `decorateAuthError`, `getAgentGate()` (agent writes → `confirmation_required` + `confirmationId`/`approveUrl`, retry with `confirmationId`), shared REST rate-limit buckets (`defaultRateLimiting` now exported). Re-verified after rebase: lint clean, `tsc --noEmit` clean, `pnpm test:run` → 22 files passed | 1 skipped; 379 passed | 13 skipped (392).
 Live with mock issuer (`next dev`, seeded Postgres, SDK client + bearer): MCP-audience agent token lists 9 tools; REST-audience token on `/mcp` → 401 `invalid_token` + `resource_metadata`; create_booking → 428 `confirmation_required` + approveUrl; user bearer approves (200); retry with `confirmationId` → `confirmed`; cancel_booking → `confirmation_required`.
 **Gaps:** `confirm=true` is model-asserted (the gate is the hard control, and applies to agents only); OTel is a hook only (`McpDeps.metrics`; DevOps helpers not merged); `claude mcp add` commands not executed against a local Claude config; no stdio/SSE transport, no session resumability (stateless by design); in-memory confirmation/rate-limit stores are per-instance (Security's note).
+### DevOps / observability verification (Node 24.15.0, local Postgres 16)
+
+```
+$ pnpm lint
+
+> agenticweb@0.1.0 lint /Users/upendrasingh/.ao/data/worktrees/agenticweb/agenticweb-6
+> eslint .
+
+$ pnpm tsc --noEmit
+tsc exit=0
+$ DATABASE_URL_TEST=… pnpm test:run
+ Test Files  16 passed (16)
+      Tests  120 passed (120)
+$ pnpm test:run (no DB)
+ Test Files  15 passed | 1 skipped (16)
+      Tests  108 passed | 12 skipped (120)
+$ pnpm build
+✓ Compiled successfully in 837ms
+  Finished TypeScript in 1299ms ...
+build exit=
+$ pnpm audit --audit-level=high
+1 vulnerabilities found
+Severity: 1 moderate
+```
+
+Not verified: `docker build` (engine hung, Podman VM crashed), hadolint, Trivy/Grype results, `promtool test rules`, collector `validate`, Grafana rendering, rollback rehearsal, backups/restore, load test.
+
+Re-run after rebasing onto main (REST v1 + frontend landed): `pnpm lint` clean · `pnpm tsc --noEmit` exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 22 passed (22), Tests 207 passed (207) · `pnpm build` → Compiled successfully, Finished TypeScript.
+
+Re-run after second rebase (Phase 3 authn landed; prod now needs AUTH_ISSUER/SESSION_SECRET — compose, CI smoke, k8s, docs updated): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 28 passed (28), Tests 381 passed (381) · build Compiled successfully. CI first run on GitHub: verify, audit, e2e green; Trivy image scan found only base-image npm CVEs → npm/yarn/corepack stripped from runner; hadolint/actionlint/Grype fixes in progress.
+
+Re-run after third rebase (MCP server landed; MCP channel now emits agent requests / tool discovery / human-intervention metrics, `tests/observability/mcp-metrics.test.ts`): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 31 passed (31), Tests 419 passed (419) · build Compiled successfully (incl. /mcp).
+
+After merging main (QA PR #8): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 35 passed (35), Tests 430 passed (430) · build Compiled successfully. My duplicate Playwright job removed; E2E is QA's `agentic` job (`pnpm test:e2e:isolated`). CI runs so far: verify, audit, infra-lint green; container job: Trivy green, Grype zlib CVE fixed via `apk upgrade` (pending re-run).
+
 
 ## Hardening verification (Node 24.15.0, Postgres 16 on an isolated throwaway cluster :55439, DBs `agenticweb_hard_test` / `agenticweb_hard_e2e` — never the dev DB), 2026-11-10
 
@@ -268,3 +309,7 @@ Mutation checks (each break made ≥1 test fail; 13/13 caught): MCP gate for all
 Found by the e2e run, not by unit tests: Next dev loads one copy of `@/core/errors` per route, and the gate singleton on `globalThis` throws `AppError`s from whichever copy created it, so `instanceof AppError` failed and a 428 became a 500. Fixed with a `Symbol.for` brand in `AppError` (regression test).
 
 **Gaps / not verified:** no end-user consent/revocation UI for grants; no RP-initiated logout at the IdP; the ID token must carry `org_id` (no claim-mapping step); only the mock issuer was exercised (not a real OIDC provider); confirmation global cap is soft under heavy concurrency; Prisma statements are not individually cancellable (abort stops work before it starts, not mid-query); approval page relies on Next's same-origin server-action check rather than a custom CSRF token; CI does not run Playwright yet.
+
+After merging main again (SPEC-004 hardening, PR #9; MCP writes now human-bound): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 39 passed (39), Tests 525 passed (525) · build Compiled successfully. MCP metrics adapted: `consent_required` human-intervention recorded when a write is bounced for out-of-band approval. Dockerfile build context now keeps tests/ (evals/ imports tests/agentic/support).
+
+AO review follow-up (sdk-trace moved to dependencies; SIGTERM handler re-delivers default termination after flush — child-process test reproduced the hang before the fix; failed-auth REST requests now counted): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 41 passed (41), Tests 527 passed (527) · build Compiled successfully · `pnpm audit --audit-level=high` exit 0.

@@ -1,0 +1,99 @@
+# Reference Kubernetes manifests (NOT applied by CI; no cluster is provisioned by this repo). Replace IMAGE and the
+# secret values, then `kubectl apply -f deploy/k8s/`. See docs/deployment.md for the release sequence and env contract.
+apiVersion: v1
+kind: Namespace
+metadata: { name: agenticweb }
+---
+# Secret TEMPLATE: create it out-of-band (sealed-secrets / external-secrets / cloud secret manager); never commit values.
+apiVersion: v1
+kind: Secret
+metadata: { name: agenticweb-env, namespace: agenticweb }
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://USER:PASSWORD@HOST:5432/agenticweb?sslmode=require"
+  SESSION_SECRET: "REPLACE-with-32+-random-chars"   # required in production (HMAC for session cookies)
+  # OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer …"   # only if the backend needs credentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: agenticweb-config, namespace: agenticweb }
+data:
+  NODE_ENV: production
+  APP_URL: https://example.invalid           # public origin
+  LOG_LEVEL: info
+  AUTH_ISSUER: https://idp.example.invalid   # required in production: OIDC issuer for bearer tokens
+  # AUTH_JWKS_URI: https://idp.example.invalid/.well-known/jwks.json
+  TRUST_PROXY: "true"   # ONLY if the ingress overwrites x-forwarded-for
+  OTEL_SERVICE_NAME: agenticweb
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+  OTEL_TRACES_SAMPLER_ARG: "0.2"
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=production
+---
+# Run BEFORE rolling out a new app version (e.g. Helm pre-upgrade hook / CD step). Migrations must be backward
+# compatible with the previous app version (expand → migrate → contract) so rollback never needs a DB downgrade.
+apiVersion: batch/v1
+kind: Job
+metadata: { name: agenticweb-migrate, namespace: agenticweb }
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: migrate
+          image: IMAGE_MIGRATE            # built with --target migrate
+          envFrom: [{ secretRef: { name: agenticweb-env } }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:   # read-only root FS: pnpm/prisma need scratch space
+            - { name: tmp, mountPath: /tmp }
+            - { name: home, mountPath: /home/node }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: home, emptyDir: {} }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: agenticweb, namespace: agenticweb }
+spec:
+  replicas: 2
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: agenticweb } }
+  template:
+    metadata: { labels: { app: agenticweb } }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: app
+          image: IMAGE                    # built with --target runner; pin by digest
+          ports: [{ name: http, containerPort: 3000 }]
+          envFrom:
+            - configMapRef: { name: agenticweb-config }
+            - secretRef: { name: agenticweb-env }
+          startupProbe:   { httpGet: { path: /api/health, port: http }, periodSeconds: 3, failureThreshold: 20 }
+          livenessProbe:  { httpGet: { path: /api/health, port: http }, periodSeconds: 15, timeoutSeconds: 3 }
+          readinessProbe: { httpGet: { path: /api/ready,  port: http }, periodSeconds: 5,  timeoutSeconds: 3, failureThreshold: 2 }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: next-cache, mountPath: /app/.next/cache }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: next-cache, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: agenticweb, namespace: agenticweb }
+spec:
+  selector: { app: agenticweb }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: agenticweb, namespace: agenticweb }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: agenticweb } }

@@ -1,0 +1,77 @@
+# promtool test rules alerts.test.yml
+rule_files: [alerts.rules.yml]
+evaluation_interval: 1m
+tests:
+  - name: error rate alert fires at 10% errors, silent at 1%
+    interval: 1m
+    input_series:
+      - series: 'agenticweb_agent_tool_invocations_total{tool="bookings.create",outcome="success",actor_kind="agent"}'
+        values: "0+90x30"
+      - series: 'agenticweb_agent_tool_invocations_total{tool="bookings.create",outcome="error",actor_kind="agent"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AgentToolErrorRateHigh
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: "More than 5% of tool invocations fail with a server error"
+              description: "Unexpected (5xx-class) failures across tools for 10m. Check traces with error status and the redacted logs by requestId. Runbook: docs/troubleshooting.md#high-error-rate"
+  - name: error rate alert stays silent at 1% errors
+    interval: 1m
+    input_series:
+      - series: 'agenticweb_agent_tool_invocations_total{tool="bookings.create",outcome="success"}'
+        values: "0+99x30"
+      - series: 'agenticweb_agent_tool_invocations_total{tool="bookings.create",outcome="error"}'
+        values: "0+1x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AgentToolErrorRateHigh
+        exp_alerts: []
+  - name: invalid argument alert fires per tool
+    interval: 1m
+    input_series:
+      - series: 'agenticweb_agent_invalid_arguments_total{tool="slots.list"}'
+        values: "0+50x40"
+      - series: 'agenticweb_agent_tool_invocations_total{tool="slots.list",outcome="invalid_argument"}'
+        values: "0+50x40"
+      - series: 'agenticweb_agent_tool_invocations_total{tool="slots.list",outcome="success"}'
+        values: "0+50x40"
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: AgentInvalidArgumentRateHigh
+        exp_alerts:
+          - exp_labels: { severity: warn, tool: slots.list }
+            exp_annotations:
+              summary: "Over 30% of slots.list calls are rejected as invalid"
+              description: "Agents are likely misreading the tool schema/description. Review the tool definition or recent schema changes. Runbook: docs/troubleshooting.md#invalid-arguments"
+  - name: authz spike alert
+    interval: 1m
+    input_series:
+      - series: 'agenticweb_agent_authz_rejections_total{tool="bookings.cancel",code="forbidden"}'
+        values: "0+120x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AgentAuthzRejectionSpike
+        exp_alerts:
+          - exp_labels: { severity: warn }
+            exp_annotations:
+              summary: "Sustained authorization rejections (>1/s)"
+              description: "Possible probing, a broken grant/consent flow, or an expired-token loop. Check audit events with outcome=denied. Runbook: docs/troubleshooting.md#authz-rejections"
+  - name: p95 latency alert
+    interval: 1m
+    input_series:
+      - series: 'agenticweb_agent_tool_duration_milliseconds_bucket{tool="slots.list",le="500"}'
+        values: "0+0x30"
+      - series: 'agenticweb_agent_tool_duration_milliseconds_bucket{tool="slots.list",le="2500"}'
+        values: "0+60x30"
+      - series: 'agenticweb_agent_tool_duration_milliseconds_bucket{tool="slots.list",le="+Inf"}'
+        values: "0+60x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AgentToolLatencyP95High
+        exp_alerts:
+          - exp_labels: { severity: warn, tool: slots.list }
+            exp_annotations:
+              summary: "p95 latency of slots.list above 1s"
+              description: "Runbook: docs/troubleshooting.md#slow-tools"

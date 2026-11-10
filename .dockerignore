@@ -1,0 +1,21 @@
+.git
+.github
+.claude
+.next
+node_modules
+coverage
+out
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.example
+Dockerfile
+docker-compose*.yml
+.dockerignore
+docs
+# NOT ignored: tests/ and evals/ — `next build` type-checks every file in tsconfig (evals/ imports tests/agentic/support)
+specs
+deploy
+*.md
+src/generated
+.DS_Store

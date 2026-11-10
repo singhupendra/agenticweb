@@ -18,6 +18,7 @@ import type { CapabilityRegistry } from "@/core/capabilities";
 import type { Logger } from "@/core/logging";
 import { actorSubject } from "@/core/auth";
 import { registry as defaultRegistry } from "@/capabilities";
+import { recordAgentRequest, recordHumanIntervention, recordToolDiscovery } from "@/observability";
 import { CONFIRMATION_ID_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
 import type { Runtime } from "@/runtime";
 import { z } from "zod";
@@ -98,12 +99,15 @@ export function createMcpHandler(deps: McpDeps) {
         "Write tools (create/update/cancel booking) never run on your say-so: the first call returns `confirmation_required` with an approval link for the human. Show the link to the user, wait until they say they approved, then retry with identical arguments plus the confirmationId. Always pass a unique idempotencyKey.",
     });
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      recordToolDiscovery({ channel: "mcp", outcome: "success" });
+      return {
       tools: listTools(registry, actor, { humanConfirmation: true }).map((t) => ({
         name: t.name, description: t.description, inputSchema: t.inputSchema as { type: "object" },
         outputSchema: t.outputSchema as { type: "object" }, annotations: t.annotations,
       })),
-    }));
+      };
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (req): Promise<CallToolResult> => {
       const cap = registry.byMcpTool(req.params.name);
@@ -128,6 +132,7 @@ export function createMcpHandler(deps: McpDeps) {
           ...(base.errors ? { errors: base.errors.map((i) => ({ ...i, message: sanitizeUntrusted(i.message) })) } : {}),
           ...(approval ? { confirmationId: approval, approveUrl: `${origin}/api/confirmations/${approval}/approve`, approvalUrl: `${origin}/approvals/${approval}` } : {}),
         };
+        if (approval) recordHumanIntervention({ reason: "consent_required" });
         finish("error", problem.code);
         return { isError: true, content: [{ type: "text", text: JSON.stringify(problem) }], _meta: { [UNTRUSTED_META]: true } };
       };
@@ -184,6 +189,7 @@ export function createMcpHandler(deps: McpDeps) {
         await deps.authFailure?.(request);
         throw decorateAuthError(e, resource);
       }
+      recordAgentRequest({ channel: "mcp", actorKind: actor.kind });
 
       const text = await readCapped(request);
       let parsedBody: unknown;

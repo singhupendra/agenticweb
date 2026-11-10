@@ -1,3 +1,7 @@
+# Local development stack. NOT for production (dev-only credentials, DEV_AUTH_ENABLED).
+#   docker compose up -d postgres                            # DB only (pnpm db:up) — run the app with `pnpm dev`
+#   docker compose --profile app up --build                  # DB + migrations + production-built app on :3000
+#   docker compose --profile app --profile observability up  # + OTel collector, Prometheus, Jaeger, Grafana (:3001)
 services:
   postgres:
     image: postgres:16-alpine
@@ -6,11 +10,79 @@ services:
       POSTGRES_PASSWORD: agenticweb_dev_only
       POSTGRES_DB: agenticweb
     ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agenticweb"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  migrate:
+    profiles: ["app"]
+    build: { context: ., target: migrate }
+    environment:
+      DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@postgres:5432/agenticweb
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  app:
+    profiles: ["app"]
+    build: { context: ., target: runner }
+    ports: ["3000:3000"]
+    environment:
+      NODE_ENV: production
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://agenticweb:agenticweb_dev_only@postgres:5432/agenticweb
+      LOG_LEVEL: info
+      # Production mode requires an issuer + session secret (dev-only placeholders; bearer auth is not exercised here).
+      AUTH_ISSUER: http://localhost:3000
+      SESSION_SECRET: dev-only-session-secret-change-me-0123456789
+      # Empty = telemetry off. Set to http://otel-collector:4318 when running the `observability` profile.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: agenticweb
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=local
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    read_only: true
+    tmpfs: ["/tmp", "/app/.next/cache"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # ---- observability profile (open source, local only) ----
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes: ["./deploy/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro"]
+    ports: ["4317:4317", "4318:4318"]   # OTLP gRPC / HTTP
+    depends_on: [jaeger]
+
+  jaeger:
+    profiles: ["observability"]
+    image: jaegertracing/jaeger:2.23.0
+    ports: ["16686:16686"]               # trace UI
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.16.0
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.0.12
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: agenticweb_dev_only
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+
 volumes:
   pgdata:

@@ -1,0 +1,71 @@
+# Prometheus alerting rules for the agent-facing metrics (src/observability/metrics.ts).
+# Metric names assume the OTel Collector Prometheus exporter defaults (dots → underscores, `_total` on counters,
+# `_milliseconds` on the ms histogram). Thresholds are starting points: tune against real traffic (docs/observability.md).
+# Test:  promtool check rules alerts.rules.yml && promtool test rules alerts.test.yml
+groups:
+  - name: agenticweb-agents
+    rules:
+      - alert: AgentToolErrorRateHigh
+        expr: |
+          sum(rate(agenticweb_agent_tool_invocations_total{outcome="error"}[5m]))
+            / clamp_min(sum(rate(agenticweb_agent_tool_invocations_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "More than 5% of tool invocations fail with a server error"
+          description: "Unexpected (5xx-class) failures across tools for 10m. Check traces with error status and the redacted logs by requestId. Runbook: docs/troubleshooting.md#high-error-rate"
+
+      - alert: AgentToolLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le, tool) (rate(agenticweb_agent_tool_duration_milliseconds_bucket[5m]))) > 1000
+        for: 10m
+        labels: { severity: warn }
+        annotations:
+          summary: "p95 latency of {{ $labels.tool }} above 1s"
+          description: "Runbook: docs/troubleshooting.md#slow-tools"
+
+      - alert: AgentInvalidArgumentRateHigh
+        expr: |
+          sum by (tool) (rate(agenticweb_agent_invalid_arguments_total[15m]))
+            / clamp_min(sum by (tool) (rate(agenticweb_agent_tool_invocations_total[15m])), 0.001) > 0.3
+        for: 15m
+        labels: { severity: warn }
+        annotations:
+          summary: "Over 30% of {{ $labels.tool }} calls are rejected as invalid"
+          description: "Agents are likely misreading the tool schema/description. Review the tool definition or recent schema changes. Runbook: docs/troubleshooting.md#invalid-arguments"
+
+      - alert: AgentAuthzRejectionSpike
+        expr: sum(rate(agenticweb_agent_authz_rejections_total[5m])) > 1
+        for: 5m
+        labels: { severity: warn }
+        annotations:
+          summary: "Sustained authorization rejections (>1/s)"
+          description: "Possible probing, a broken grant/consent flow, or an expired-token loop. Check audit events with outcome=denied. Runbook: docs/troubleshooting.md#authz-rejections"
+
+      - alert: AgentTaskFailureRateHigh
+        expr: |
+          sum(rate(agenticweb_agent_task_completions_total{outcome="failed"}[15m]))
+            / clamp_min(sum(rate(agenticweb_agent_task_completions_total[15m])), 0.001) > 0.1
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: "More than 10% of state-changing tasks (e.g. bookings) fail"
+          description: "Runbook: docs/troubleshooting.md#high-error-rate"
+
+      - alert: AgentHumanInterventionHigh
+        expr: |
+          sum(rate(agenticweb_agent_human_interventions_total[1h]))
+            / clamp_min(sum(rate(agenticweb_agent_task_completions_total[1h])), 0.0001) > 0.5
+        for: 1h
+        labels: { severity: info }
+        annotations:
+          summary: "Humans are stepping in for over half of agent tasks"
+          description: "Agent flows may be too hard to complete autonomously (confirmation/consent friction)."
+
+      - alert: AgentTelemetryMissing
+        expr: absent_over_time(agenticweb_agent_tool_invocations_total[30m])
+        for: 5m
+        labels: { severity: info }
+        annotations:
+          summary: "No tool invocation metrics for 30m"
+          description: "Either no traffic, or the app/collector pipeline is down (check OTEL_EXPORTER_OTLP_ENDPOINT and the collector)."

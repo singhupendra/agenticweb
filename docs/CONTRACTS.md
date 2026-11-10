@@ -63,6 +63,8 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 End-user consent/grant-revocation UI (the store is persistent now), RP-initiated IdP logout · users capabilities (schemas + interface only) · OpenTelemetry · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
+Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+
 ## 7. Phase 2 additions (bookings and slots)
 
 * Capabilities: `slots.list`, `bookings.create|list|get|cancel` (see `specs/SPEC-002-bookings-and-slots.md`). Org-scoped authenticated capabilities use `loadResource` to return the organization/booking facts, so the policy enforces tenant isolation and ownership.
@@ -86,6 +88,13 @@ End-user consent/grant-revocation UI (the store is persistent now), RP-initiated
 * Transactional agent scopes need human confirmation: `getAgentGate().check(actor, cap, input, confirmationId)` (428 `confirmation_required`).
 * Reusable limits in `core/security` (`createRateLimiter`, `readBodyWithLimit`, `ReplayGuard`). New error code `confirmation_required` (428). `readBodyWithLimit` is the single body-cap implementation (REST uses it; MCP must too).
 * New scopes/capabilities must be added to `tests/authz-matrix.test.ts`.
+
+## 11. Observability additions (DevOps)
+
+* `createExecutor({ instrument })` wraps the whole pipeline; `createRuntime` passes `createOtelInstrument()` (`src/observability`), which emits the `capability <name>` span and the agent metrics for every channel. Channel adapters call `recordAgentRequest` (REST and MCP done), `recordToolDiscovery` (MCP `tools/list`) and `recordHumanIntervention` (MCP approval required). Never re-implement these in routes/MCP code.
+* New env vars `OTEL_*` live in `OtelEnvShape` (`core/env.ts`); telemetry is a no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`.
+* Logger redaction is key-based **and** value-based (`scrubString`). Never log request bodies; never put ids/emails/tokens/free text in span or metric attributes.
+* Production image/CI/deploy: `docs/deployment.md`; dashboards/alerts: `deploy/observability/`.
 
 ## 10. Hardening additions (durable stores, human-bound MCP writes, OIDC login)
 
