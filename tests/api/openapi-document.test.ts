@@ -79,7 +79,7 @@ describe("OpenAPI document (generated from the registry)", () => {
       responses: Record<string, { content: Record<string, { schema: { properties: { data: { properties: object } } } }> }>;
     };
     const out = Object.keys(op.responses["201"]!.content["application/json"]!.schema.properties.data.properties);
-    expect(out.sort()).toEqual(["createdAt", "id", "notes", "serviceId", "slotId", "status"]);
+    expect(out.sort()).toEqual(["createdAt", "id", "notes", "serviceId", "slotId", "slotStartsAt", "status"]);
     const body = op.requestBody.content["application/json"]!.schema;
     expect(Object.keys(body.properties).sort()).toEqual(["notes", "slotId"]);
     expect(body.additionalProperties).toBe(false);

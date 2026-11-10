@@ -84,7 +84,7 @@ export async function bookConsultation(
   if (open.length === 0) return res({ ok: false, reason: "no available slot", discovered, service });
   const slot = open[Math.min(o.prefs.slotIndex ?? 0, open.length - 1)];
 
-  const args = { orgSlug: ORG_SLUG, slotId: slot.id, ...(o.prefs.notes ? { notes: o.prefs.notes } : {}), idempotencyKey, confirm: true };
+  const args = { orgSlug: ORG_SLUG, slotId: slot.id, ...(o.prefs.notes ? { notes: o.prefs.notes } : {}), idempotencyKey };
   /**
    * A write whose outcome is unknown (response lost) is NEVER blindly re-sent: the agent first reconciles by reading its own
    * bookings (idempotent read). If the booking exists it adopts it; otherwise it retries with the SAME idempotencyKey

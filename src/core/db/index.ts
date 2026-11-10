@@ -14,3 +14,4 @@ export function getPrisma(): PrismaClient {
   return (client ??= new PrismaClient({ adapter: new PrismaPg({ connectionString: getEnv().DATABASE_URL, ...PG_POOL_OPTIONS }) }));
 }
 export * from "./stores";
+export * from "./auth-stores";

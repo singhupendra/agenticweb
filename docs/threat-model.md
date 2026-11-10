@@ -25,6 +25,9 @@ Status legend: **P1** = contract/mitigation exists in Phase 1 code; **Pn** = own
 | D2 | DoS | Agent loops hammering tools | MCP | Per-grant rate limit and daily mutation quota | P4 |
 | E1 | Elevation | Agent exceeds delegator's rights (confused deputy) | REST, MCP | Effective permission = grant scopes ∩ user's rights ∩ capability requirement; agents never get `admin` (also ignored if the token claims it); token scopes are intersected with the grant (escalation test); transactional scopes need single-use human confirmation | P3 mitigated |
 | E2 | Elevation | Admin capability exposed as MCP tool | MCP | Capability must declare `mcp.exposed` + scopes; admin-only capabilities default to not exposed | P1 |
+| E4 | Elevation | A model (untrusted) makes a write by asserting "the user approved" | MCP | No model-settable flag. Every MCP write needs a single-use confirmation approved by the human in their own browser session, bound to actor + tool + argument hash + 5-min expiry; the MCP-audience token is rejected by the approval endpoints (no self-approval); owner-only, no oracle for foreign ids. Tests: `mcp-server`, `confirmations-http`, `auth-stores.integration`, e2e `auth-and-approvals`. Residual: a human who approves without reading; the approval page shows the exact arguments to make that less likely | P4 hardening |
+| S4 | Spoofing | Login CSRF / authorization-code injection / mix-up / ID-token replay | UI | PKCE S256, `state` + `nonce` in an encrypted HttpOnly transaction cookie bound to the initiating browser, exact `redirect_uri`, ID-token `iss`/`aud`/`exp`/`nonce`/signature checks, discovery issuer pinned, https endpoints, new session id per login, same-site-only `returnTo`. Tests: `oidc-login` (53). Residual: no RP-initiated logout at the IdP; `org_id` claim is trusted from the IdP | P4 hardening |
+| D3 | DoS / bypass | Per-instance counters, confirmations, grants let an attacker multiply limits by hitting different instances, or lose state on restart | all | Postgres-backed stores (atomic single-statement updates; `AUTH_STORES=postgres` required in production): rate-limit windows, confirmations, grants (revocation), replay ids. DB errors fail closed. Tests against real Postgres incl. 50 concurrent hits and 12 racing spenders. Residual: confirmation global cap is soft under heavy concurrency; every request adds a DB round-trip | P4 hardening |
 | E3 | Elevation | Missing authorization on new route | REST | Capabilities require an `authorize`; routes only call `invokeCapability`; registry test fails if a capability lacks policy | P1 |
 
 ## 2. Specific threats
@@ -43,13 +46,17 @@ Status legend: **P1** = contract/mitigation exists in Phase 1 code; **Pn** = own
 
 **Token confusion.** Session cookie (HS256) is rejected as a bearer token; bearer verification pins asymmetric algorithms; user tokens cannot carry agent claims; MCP/REST audiences are distinct (tests in `auth-tokens`, `auth-session`).
 
-**Confirmation replay.** Human confirmations are bound to (agent, capability, input hash), expire in 5 min and are single-use (`auth-http`). Store is in-memory (residual: not durable/multi-instance).
+**Confirmation replay.** Human confirmations are bound to (actor, capability, input hash), expire in 5 min and are single-use (`auth-http`, `mcp-server`; 12 concurrent spenders → exactly 1 in `auth-stores.integration`). The store is Postgres by default, so approvals survive restarts and span instances.
+
+**Tool-result injection (MCP).** Only free-text fields are sanitised (schema-derived); structured fields (ids, enums, timestamps) pass untouched so a sanitiser can neither corrupt them nor be used as an oracle. Sanitising reduces, never eliminates, injection; the human-approved write is the backstop.
+
+**Module duplication.** Next.js can load one copy of a module per route while singletons on `globalThis` are shared; `AppError` therefore uses a global `Symbol.for` brand for `instanceof` so errors thrown by the shared gate/stores are never misreported as 500s (found by the e2e run; regression test in `errors.test.ts`).
 
 ## 3. Per-channel notes
 
 * **Human UI:** XSS (React escaping; no `dangerouslySetInnerHTML` of user content; CSP in Phase 6), clickjacking (frame-ancestors), CSRF.
 * **REST:** content-type enforcement, body size cap, CORS allowlist (default none), problem+json everywhere.
-* **MCP:** Streamable HTTP origin validation (DNS rebinding), auth required for non-public tools, tool list filtered by actor's scopes, tool descriptions are static (no user content → no tool-poisoning by data), `readOnlyHint`/`destructiveHint` annotations accurate.
+* **MCP:** Streamable HTTP origin validation (DNS rebinding), auth required for non-public tools, tool list filtered by actor's scopes, tool descriptions are static (no user content → no tool-poisoning by data), writes need human out-of-band approval, calls are aborted at the deadline, `readOnlyHint`/`destructiveHint` annotations accurate.
 * **WebMCP:** runs with the *user's* browser session — a malicious in-page script or extension could invoke tools; therefore mutating tools require user confirmation UI, and tools only call same-origin REST (inheriting server-side authz). Feature-detected; absence has no effect.
 
 ## 4. Residual risk accepted

@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { actorSubject, decorateAuthError, resolveActor, resourceUri, type Actor, type ActorResolver } from "@/core/auth";
 import { AppError, notFound, problemResponse, validationError, type Envelope } from "@/core/errors";
 import { getEnv } from "@/core/env";
+import { getPrisma, PrismaRateLimitStore } from "@/core/db";
 import { InMemoryRateLimitStore, clientKey, createRateLimiter, readBodyWithLimit, type RateLimiter } from "@/core/security";
 import { CONFIRMATION_HEADER, getAgentGate, type AgentConfirmationGate } from "@/agents/policies";
 import type { AnyCapability, HttpBinding } from "@/core/capabilities";
@@ -63,7 +64,7 @@ export function createRestRateLimiting(o: { limiter: RateLimiter; anonLimit: () 
 const lim = globalThis as unknown as { __restRateLimiting?: Pick<RestDeps, "rateLimit" | "authFailure"> };
 export function defaultRateLimiting() {
   return (lim.__restRateLimiting ??= createRestRateLimiting({
-    limiter: createRateLimiter({ store: new InMemoryRateLimitStore(), limit: getEnv().RATE_LIMIT_AUTH_PER_MIN, windowMs: 60_000 }),
+    limiter: createRateLimiter({ store: getEnv().AUTH_STORES === "postgres" ? new PrismaRateLimitStore(getPrisma()) : new InMemoryRateLimitStore(), limit: getEnv().RATE_LIMIT_AUTH_PER_MIN, windowMs: 60_000 }),
     anonLimit: () => getEnv().RATE_LIMIT_ANON_PER_MIN,
     trustProxy: () => getEnv().TRUST_PROXY,
   }));

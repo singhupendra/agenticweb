@@ -21,6 +21,8 @@ export const BookingSchema = z.object({
   id: idSchema,
   slotId: idSchema,
   serviceId: idSchema,
+  /** When the booked slot starts (UTC ISO-8601). Render it in the organization's timezone. */
+  slotStartsAt: isoDateTime,
   status: BookingStatusSchema,
   notes: z.string().max(1000).nullable(),
   createdAt: isoDateTime,

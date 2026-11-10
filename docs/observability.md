@@ -36,7 +36,7 @@ Prometheus names assume the Collector's Prometheus exporter defaults (`.`→`_`,
 | `agenticweb.agent.invalid_arguments` | `…_invalid_arguments_total` | `tool` | executor hook |
 | `agenticweb.agent.authz_rejections` | `…_authz_rejections_total` | `tool`, `code` | executor hook |
 | `agenticweb.agent.task_completions` | `…_task_completions_total` | `task`, `outcome` (`completed`/`failed`/`abandoned`) | executor hook for **mutating** capabilities; Phase 5 may add `abandoned` |
-| `agenticweb.agent.human_interventions` | `…_human_interventions_total` | `reason` | MCP server: `confirmation_required` (write without `confirm=true`) and `consent_required` (out-of-band approval gate) |
+| `agenticweb.agent.human_interventions` | `…_human_interventions_total` | `reason` | MCP server: `consent_required` (a write is bounced to the human for out-of-band approval) |
 
 Rules for callers: attribute values must be bounded enums or registry capability names — never user ids, emails, request ids, tokens, free text. The helpers copy only their declared keys (test: "never accepts free-form/PII attributes"), and unknown capability names are bucketed as `unknown`.
 

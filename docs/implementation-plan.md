@@ -57,6 +57,11 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
 | 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
 | 4 | Remote MCP server `/mcp` (Streamable HTTP, stateless), tools derived from registry, `update_booking` exposed, confirm+idempotency on writes, sanitised output, 401 challenge, timeout, hooks | Agent Integration | done (rebased on Security PR #5: audience-bound bearer, 401 challenge, confirmation gate, shared rate limits) | `tests/mcp/*`, `docs/mcp-integration.md`, see "MCP verification" |
+| 4/3 | **Hardening:** human-bound single-use MCP write confirmation (no model-asserted `confirm`), approval REST + `/approvals/[id]` UI | Hardening | done | `tests/mcp/mcp-server.test.ts`, `tests/confirmations-http.test.ts`, e2e `auth-and-approvals`; see "Hardening verification" |
+| 3 | **Hardening:** Postgres GrantStore / ConfirmationStore / RateLimitStore / ReplayGuard (+ migration, `AUTH_STORES`) | Hardening | done | `tests/db/auth-stores.integration.test.ts` (15, real PG) |
+| 3 | **Hardening:** OIDC authorization-code + PKCE login/callback/session/logout, mock IdP | Hardening | done | `tests/oidc-login.test.ts` (53), e2e |
+| 4 | **Hardening:** schema-driven MCP sanitiser (free text only), AbortSignal timeout | Hardening | done | `tests/mcp/sanitize.test.ts`, `tests/executor-abort.test.ts` |
+| 2 | **Hardening:** `slotStartsAt` on booking outputs; `/bookings` "my bookings" page | Hardening | done | `tests/bookings.test.ts`, `tests/db/bookings.integration.test.ts`, e2e |
 | 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
@@ -269,3 +274,40 @@ Re-run after second rebase (Phase 3 authn landed; prod now needs AUTH_ISSUER/SES
 Re-run after third rebase (MCP server landed; MCP channel now emits agent requests / tool discovery / human-intervention metrics, `tests/observability/mcp-metrics.test.ts`): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 31 passed (31), Tests 419 passed (419) · build Compiled successfully (incl. /mcp).
 
 After merging main (QA PR #8): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 35 passed (35), Tests 430 passed (430) · build Compiled successfully. My duplicate Playwright job removed; E2E is QA's `agentic` job (`pnpm test:e2e:isolated`). CI runs so far: verify, audit, infra-lint green; container job: Trivy green, Grype zlib CVE fixed via `apk upgrade` (pending re-run).
+
+
+## Hardening verification (Node 24.15.0, Postgres 16 on an isolated throwaway cluster :55439, DBs `agenticweb_hard_test` / `agenticweb_hard_e2e` — never the dev DB), 2026-11-10
+
+```
+$ pnpm lint
+> agenticweb@0.1.0 lint /Users/upendrasingh/.ao/data/worktrees/agenticweb/agenticweb-9
+> eslint .
+
+(exit 0)
+$ pnpm tsc --noEmit
+(exit 0)
+$ pnpm test:run   # no DATABASE_URL_TEST
+ Test Files  25 passed | 2 skipped (27)
+      Tests  468 passed | 30 skipped (498)
+$ DATABASE_URL_TEST=…/agenticweb_hard_test pnpm test:run
+ Test Files  31 passed (31)
+      Tests  498 passed (498)
+$ pnpm build
+✓ Compiled successfully in 638ms
+  Finished TypeScript in 1140ms ...
+(exit 0; routes incl. ƒ /approvals/[id], ƒ /bookings, ƒ /api/auth/{login,callback,session,logout}, ƒ /api/confirmations/[id]{,/approve,/decline})
+$ QA_ADMIN_DATABASE_URL=…:55439/postgres pnpm test:e2e:isolated
+  45 passed, 3 skipped (after merging Phase 6 QA; desktop + Pixel 5; incl. 10 new: OIDC sign-in → my bookings → sign-out, returnTo open-redirect, forged callback, MCP write held → human approves on /approvals/<id> → single use, decline)
+```
+
+New suites: `tests/oidc-login.test.ts` (53), `tests/confirmations-http.test.ts` (9), `tests/executor-abort.test.ts` (3), `tests/db/auth-stores.integration.test.ts` (15), schema-aware sanitiser (+4), MCP confirmation tests rewritten (`confirm` removed; any-actor gating, self-approval, decline, cross-user spend), `AppError` cross-copy identity (+2).
+
+After merging main (Phase 6 QA, #8): its agentic suites were updated to the new MCP contract (no `confirm` argument; invalid input never solicits approval; approvals are spent when checked) and `QA_ADMIN_DATABASE_URL=…:55439/postgres pnpm test:agentic` → **36 passed (36)** against the real app + isolated non-UTC Postgres. That run found a flaw in the mock issuer (default grant id collided across users/scope sets → 401 for a second user); it now derives one grant per (user, client, scope set).
+
+Mutation checks (each break made ≥1 test fail; 13/13 caught): MCP gate for all actors (5 tests), owner-only approve, confirmation single-use, OIDC `state`, OIDC `nonce`, `returnTo` guard, logout CSRF, atomic rate-limit increment (PG), conditional replay upsert (PG), grant revocation (PG), sanitiser leaves ids alone, executor abort-before-execute, `AppError` brand.
+
+Found by the e2e run, not by unit tests: Next dev loads one copy of `@/core/errors` per route, and the gate singleton on `globalThis` throws `AppError`s from whichever copy created it, so `instanceof AppError` failed and a 428 became a 500. Fixed with a `Symbol.for` brand in `AppError` (regression test).
+
+**Gaps / not verified:** no end-user consent/revocation UI for grants; no RP-initiated logout at the IdP; the ID token must carry `org_id` (no claim-mapping step); only the mock issuer was exercised (not a real OIDC provider); confirmation global cap is soft under heavy concurrency; Prisma statements are not individually cancellable (abort stops work before it starts, not mid-query); approval page relies on Next's same-origin server-action check rather than a custom CSRF token; CI does not run Playwright yet.
+
+After merging main again (SPEC-004 hardening, PR #9; MCP writes now human-bound): lint clean · tsc exit 0 · `DATABASE_URL_TEST=… pnpm test:run` → Test Files 39 passed (39), Tests 525 passed (525) · build Compiled successfully. MCP metrics adapted: `consent_required` human-intervention recorded when a write is bounced for out-of-band approval. Dockerfile build context now keeps tests/ (evals/ imports tests/agentic/support).

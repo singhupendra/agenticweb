@@ -88,7 +88,9 @@ test.describe("signed-in customer (dev actor)", () => {
 
     // Validation: submitting without a slot shows an announced error.
     await form.getByRole("button", { name: "Confirm booking" }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    // Wait for THIS form's own error (not Next's always-present route announcer, also role=alert): React 19 resets the form when the
+    // action settles, so picking a slot before that would silently clear it (slow on a cold CI server).
+    await expect(form.getByText("One or more fields are invalid.")).toBeVisible();
 
     // Keyboard-selectable radio group; pick the last slot to avoid clashing with other scenarios.
     const radios = form.getByRole("radio");

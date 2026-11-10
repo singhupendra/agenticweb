@@ -15,6 +15,8 @@ export interface CapabilityContext<Deps> {
   now: Date;
   deps: Deps;
   logger: Logger;
+  /** Aborted when the caller gives up (e.g. MCP tool timeout). Pass it to anything cancellable (fetch, timers). */
+  signal?: AbortSignal;
 }
 
 export interface HttpBinding {

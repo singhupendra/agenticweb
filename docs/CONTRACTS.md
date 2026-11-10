@@ -61,7 +61,7 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 ## 6. Known gaps (owned by later phases)
 
-Persistent GrantStore + consent UI, OIDC authorization-code login redirect, durable confirmation store, shared (Redis/Postgres) rate-limit store (see `docs/authentication.md`) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · OpenTelemetry · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+End-user consent/grant-revocation UI (the store is persistent now), RP-initiated IdP logout · users capabilities (schemas + interface only) · OpenTelemetry · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
 Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
@@ -89,9 +89,18 @@ Real authN (sessions, OAuth/agent token verification — currently anonymous, or
 * Reusable limits in `core/security` (`createRateLimiter`, `readBodyWithLimit`, `ReplayGuard`). New error code `confirmation_required` (428). `readBodyWithLimit` is the single body-cap implementation (REST uses it; MCP must too).
 * New scopes/capabilities must be added to `tests/authz-matrix.test.ts`.
 
-## 10. Observability additions (DevOps)
+## 11. Observability additions (DevOps)
 
-* `createExecutor({ instrument })` wraps the whole pipeline; `createRuntime` passes `createOtelInstrument()` (`src/observability`), which emits the `capability <name>` span and the agent metrics for every channel. Channel adapters call `recordAgentRequest` (REST and MCP done), `recordToolDiscovery` (MCP `tools/list`) and `recordHumanIntervention` (MCP confirm/consent). Never re-implement these in routes/MCP code.
+* `createExecutor({ instrument })` wraps the whole pipeline; `createRuntime` passes `createOtelInstrument()` (`src/observability`), which emits the `capability <name>` span and the agent metrics for every channel. Channel adapters call `recordAgentRequest` (REST and MCP done), `recordToolDiscovery` (MCP `tools/list`) and `recordHumanIntervention` (MCP approval required). Never re-implement these in routes/MCP code.
 * New env vars `OTEL_*` live in `OtelEnvShape` (`core/env.ts`); telemetry is a no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`.
 * Logger redaction is key-based **and** value-based (`scrubString`). Never log request bodies; never put ids/emails/tokens/free text in span or metric attributes.
 * Production image/CI/deploy: `docs/deployment.md`; dashboards/alerts: `deploy/observability/`.
+
+## 10. Hardening additions (durable stores, human-bound MCP writes, OIDC login)
+
+* `AUTH_STORES=postgres|memory` (`core/env.ts`): grants, confirmations, rate-limit windows and replay ids are Postgres-backed by default (`src/core/db/auth-stores.ts`; migration `20261112000000_durable_auth_stores`); `memory` is for unit tests (`tests/setup.ts` sets it) and is refused in production. Real-Postgres tests: `tests/db/auth-stores.integration.test.ts` (need `DATABASE_URL_TEST`).
+* `createMcpHandler` **requires** `gate`; MCP writes always need a human-approved, single-use confirmation (`gate.check(..., {all:true})`). `confirm` arg removed; `listTools(..., {humanConfirmation:true})` adds the optional `confirmationId`.
+* New routes: `GET /api/confirmations/{id}`, `POST /api/confirmations/{id}/approve|decline`, page `/approvals/{id}`; `/api/auth/{login,callback,session,logout}`; mock-issuer `authorize`, `oauth/token`, discovery. New error code `login_failed` (400).
+* `AppError` is recognised across duplicated module copies via `Symbol.for("agenticweb.AppError")` — keep `instanceof AppError` (do not compare `constructor`/`name`).
+* `executor.invoke(..., {signal})` / `ctx.signal`: abort is honoured before the capability starts; a started mutation completes and is recorded.
+* `Booking` output gained `slotStartsAt` (UTC ISO); `/bookings` lists the signed-in user's bookings.
