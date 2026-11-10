@@ -61,7 +61,7 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 ## 6. Known gaps (owned by later phases)
 
-Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, OpenAPI, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+Persistent GrantStore + consent UI, OIDC authorization-code login redirect, durable confirmation store, shared (Redis/Postgres) rate-limit store (see `docs/authentication.md`) · users capabilities (schemas + interface only) · MCP server, OpenAPI, discovery, WebMCP · OpenTelemetry · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
 ## 7. Phase 2 additions (bookings and slots)
 
@@ -70,3 +70,11 @@ Real authN (sessions, OAuth/agent token verification — currently anonymous, or
 * Durable stores: `PrismaIdempotencyStore`, `PrismaAuditLog` (`core/db/stores.ts`), wired by `createPrismaRuntime`. In-memory versions remain for unit tests.
 * Overbooking protection: `reserve` locks the slot row (`FOR UPDATE`) in a transaction; a partial unique index prevents one user holding two active bookings on a slot. Tests in `tests/db` need `DATABASE_URL_TEST` (Postgres with migrations applied; truncated on each test).
 * Seed ids are deterministic (`prisma/seed.ts`): org `...0a1`, admin `...0b1`, customer `...0b2`; use with `x-dev-actor` (`user|<id>|<org>`; dev only).
+
+## 8. Phase 3 additions (authn / security)
+
+* **`resolveActor(request, {resource?: "rest"|"mcp"})`** (`core/auth/resolve-actor.ts`) is THE identity entry point for every channel. Bearer (JWKS, audience-bound) → session cookie (+CSRF) → dev header → anonymous; invalid credentials are 401, never anonymous. Details and the MCP guide: `docs/authentication.md`.
+* Auth errors: adapters pass errors through `decorateAuthError(e, resourceUri(appUrl, kind))` before `problemResponse` so 401/`insufficient_scope` carry `WWW-Authenticate … resource_metadata`.
+* Transactional agent scopes need human confirmation: `getAgentGate().check(actor, cap, input, confirmationId)` (428 `confirmation_required`).
+* Reusable limits in `core/security` (`createRateLimiter`, `readBodyWithLimit`, `ReplayGuard`). New error codes: `payload_too_large` (413), `unsupported_media_type` (415), `confirmation_required` (428).
+* New scopes/capabilities must be added to `tests/authz-matrix.test.ts`.

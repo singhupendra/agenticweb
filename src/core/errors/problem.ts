@@ -17,6 +17,9 @@ export const ERROR_CODES = {
   idempotency_key_required: { status: 400, title: "Idempotency-Key required" },
   idempotency_key_reuse: { status: 422, title: "Idempotency-Key reused with a different request" },
   rate_limited: { status: 429, title: "Too many requests" },
+  payload_too_large: { status: 413, title: "Request body too large" },
+  unsupported_media_type: { status: 415, title: "Unsupported media type" },
+  confirmation_required: { status: 428, title: "Human confirmation required" },
   not_ready: { status: 503, title: "Service not ready" },
   internal: { status: 500, title: "Internal server error" },
 } as const;

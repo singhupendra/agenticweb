@@ -55,7 +55,16 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Durable idempotency + audit (Postgres) | Architect | done | replay across runtime instances; AuditEvent rows for success/denied, hash only |
 | 2 | Slot list on service page | Architect | done | live page shows slots in org timezone |
 | 2 | Booking UI / human sign-in | Frontend/Backend | todo | needs Phase 3 session auth |
-| 3–7 | see phases above | various | todo | — |
+| 3 | OIDC/OAuth 2.1 bearer verification (jose/JWKS), audience/issuer/exp/alg pinning, mock issuer | Security | done | `tests/auth-tokens.test.ts`; live: mock-issuer tokens accepted, bad/expired/wrong-audience → 401 |
+| 3 | `resolveActor(request, {resource})` single entry point; dev resolver demoted | Security | done | `tests/auth-resolve.test.ts`; REST adapter uses it |
+| 3 | Sessions + CSRF (cookie, HMAC token, Origin) | Security | done | `tests/auth-session.test.ts` |
+| 3 | Agent delegation: grant narrowing/revocation, never admin, TTL cap, human confirmation for `bookings:write` (+ approve endpoint) | Security | done (in-memory grant/confirmation stores) | `tests/auth-tokens.test.ts`, `tests/auth-http.test.ts`; live 428 → approve → 201 → replay 403 |
+| 3 | RFC 9728 metadata + WWW-Authenticate (401 / insufficient_scope), checked against MCP spec draft 2026-11-10 | Security | done | `tests/auth-resolve.test.ts`; live `/.well-known/oauth-protected-resource[/mcp]` |
+| 3 | Rate limit, body-size limit, replay guard (pluggable, in-memory default), safe errors | Security | done (REST wired; MCP wires in P4) | `tests/security-helpers.test.ts`, `tests/auth-http.test.ts`; live 413 |
+| 3 | Authorization matrix (13 profiles × 6 capabilities = 78 cells + IDOR/expiry/audience/escalation/replay) | Security | done | `tests/authz-matrix.test.ts`, `tests/auth-http.test.ts` |
+| 3 | docs/authentication.md (+ MCP worker guide), docs/authorization.md, threat-model rows | Security | done | files |
+| 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
+| 4–7 | see phases above | various | todo | — |
 
 ## Verification (Phase 1)
 
@@ -139,3 +148,24 @@ Live walkthrough (`next dev`, dev actor header): anonymous create → 401; no ke
 
 Fixes: claim-before-execute idempotency (in-memory + Postgres, with lease), replay path audited so a mutation can't stay unaudited after an audit-write failure, dev resolver returns anonymous on malformed scopes, `bookings.cancel` is a single conditional UPDATE.
 Evidence (Node 24, local Postgres 16): lint clean, `tsc` clean, `DATABASE_URL_TEST=… pnpm test:run` → 9 files / 91 tests pass (11 against real Postgres, incl. 6 concurrent same-key requests → 1 booking, 5 concurrent cancels → all succeed, lease supersede), without DB: Tests  80 passed | 11 skipped (91), build exit 0.
+
+## Verification (Phase 3 — authn/security)
+
+Node v24.15.0, pnpm 10.33.0, 2026-11-10. Raw output (`DATABASE_URL_TEST` set, so the 12 Postgres tests ran too):
+
+```
+$ pnpm lint
+> eslint .
+$ pnpm tsc --noEmit
+(exit 0)
+$ pnpm test:run
+ Test Files  15 passed (15)
+      Tests  252 passed (252)
+$ pnpm build
+✓ Compiled successfully
+  Finished TypeScript
+```
+
+Mutation checks (each removal made ≥1 test fail): audience check, issuer check, grant scope narrowing, grant revocation, agent TTL cap, CSRF check, Origin check, confirmation single-use, confirmation input binding, anyone-can-approve, `resource_metadata` decoration, streamed body cap, failed-auth throttling. Two equivalent mutants survived (explicit `algorithms` pin — jose already rejects by key type; agent-kind approver check — agents have no `userId`), kept as defence in depth.
+
+Live (next dev, mock issuer, local Postgres): anonymous → 401 + `resource_metadata`; PRM docs served; user/agent tokens work; agent booking → 428 → human approve → 201 → confirmation replay 403; agent self-approve 403; other user GET booking 404 / owner 200; MCP-audience token on REST 401; expired token 401 (`error_description` "expired"); 70 KB body 413.
