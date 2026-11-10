@@ -170,7 +170,7 @@ AO review follow-up: request body is now read as a capped stream (413 aborts the
 ```
 $ pnpm lint            → eslint . (exit 0, no output)
 $ pnpm tsc --noEmit    → exit 0
-$ pnpm test:run        → Test Files  11 passed | 1 skipped (12); Tests  113 passed | 12 skipped (125)
+$ pnpm test:run        → Test Files  11 passed | 1 skipped (12); Tests  168 passed | 13 skipped (181) after rebase onto Phase 3 REST/OpenAPI (a3a47d5)
                          (31 new: tests/discovery/{jsonld,crawl,webmcp}.test.ts; skipped = Postgres integration tests, DATABASE_URL_TEST unset)
 $ pnpm build           → Compiled successfully; routes incl. /, /services, /services/[serviceSlug], /bookings/[bookingId], /llms.txt, /robots.txt, /sitemap.xml
 $ E2E_DATABASE_URL=…/agenticweb_fe pnpm test:e2e

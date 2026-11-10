@@ -28,11 +28,14 @@ test.describe("anonymous visitor", () => {
 
   test("skip link is the first tab stop and moves focus to main", async ({ page, isMobile }) => {
     test.skip(isMobile, "keyboard navigation is a desktop concern");
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
-    await page.keyboard.press("Tab");
     const skip = page.getByRole("link", { name: "Skip to content" });
-    await expect(skip).toBeFocused();
+    // `next dev` may full-reload once while compiling on first hit; retry from a fresh load until focus sticks.
+    await expect(async () => {
+      await page.goto("/");
+      await page.waitForLoadState("networkidle");
+      await page.keyboard.press("Tab");
+      await expect(skip).toBeFocused({ timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#main$/);
   });
