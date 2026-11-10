@@ -69,7 +69,7 @@ export class Channels {
   /** A fresh, future, un-booked slot for `serviceSlug` (so scenarios never collide on shared seed data). */
   async freshSlot(serviceSlug: string, hoursAhead = 24 * 30): Promise<{ id: string; startsAt: string }> {
     const [svc] = await this.sql<{ id: string; durationMinutes: number }>(`SELECT id,"durationMinutes" FROM "Service" WHERE slug=$1`, [serviceSlug]);
-    const startsAt = new Date(Date.now() + hoursAhead * 3_600_000 + Math.floor(Math.random() * 1e6) * 1000);
+    const startsAt = new Date(Date.now() + hoursAhead * 3_600_000 + Math.floor(Math.random() * 1800) * 1000); // <30 min jitter keeps hour-offset ordering
     const [row] = await this.sql<{ id: string }>(`INSERT INTO "Slot"("id","serviceId","startsAt","endsAt",capacity) VALUES (gen_random_uuid(),$1,$2,$3,1) RETURNING id`, [svc!.id, startsAt, new Date(startsAt.getTime() + svc!.durationMinutes * 60_000)]);
     return { id: row!.id, startsAt: startsAt.toISOString() };
   }
