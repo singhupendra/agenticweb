@@ -18,6 +18,7 @@ import type { CapabilityRegistry } from "@/core/capabilities";
 import type { Logger } from "@/core/logging";
 import { actorSubject } from "@/core/auth";
 import { registry as defaultRegistry } from "@/capabilities";
+import { recordAgentRequest, recordHumanIntervention, recordToolDiscovery } from "@/observability";
 import { CONFIRMATION_ID_ARG, CONFIRM_ARG, IDEMPOTENCY_ARG, listTools } from "@/agents/tools/derive";
 import type { Runtime } from "@/runtime";
 import { sanitizeUntrusted } from "./sanitize";
@@ -95,12 +96,15 @@ export function createMcpHandler(deps: McpDeps) {
         "Before any write tool (create/update/cancel booking) ask the human user to approve the exact action, then pass confirm=true and a unique idempotencyKey.",
     });
 
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: listTools(registry, actor, { requireConfirm: true }).map((t) => ({
-        name: t.name, description: t.description, inputSchema: t.inputSchema as { type: "object" },
-        outputSchema: t.outputSchema as { type: "object" }, annotations: t.annotations,
-      })),
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      recordToolDiscovery({ channel: "mcp", outcome: "success" });
+      return {
+        tools: listTools(registry, actor, { requireConfirm: true }).map((t) => ({
+          name: t.name, description: t.description, inputSchema: t.inputSchema as { type: "object" },
+          outputSchema: t.outputSchema as { type: "object" }, annotations: t.annotations,
+        })),
+      };
+    });
 
     server.setRequestHandler(CallToolRequestSchema, async (req): Promise<CallToolResult> => {
       const cap = registry.byMcpTool(req.params.name);
@@ -120,6 +124,7 @@ export function createMcpHandler(deps: McpDeps) {
           ...toProblem(err, { requestId, instance }),
           ...(approval ? { confirmationId: approval, approveUrl: `${new URL(deps.appUrl()).origin}/api/confirmations/${approval}/approve` } : {}),
         });
+        if (approval) recordHumanIntervention({ reason: "consent_required" });
         finish("error", problem.code);
         return { isError: true, content: [{ type: "text", text: JSON.stringify(problem) }], _meta: { [UNTRUSTED_META]: true } };
       };
@@ -127,6 +132,7 @@ export function createMcpHandler(deps: McpDeps) {
       const { [IDEMPOTENCY_ARG]: idempotencyKey, [CONFIRM_ARG]: confirm, [CONFIRMATION_ID_ARG]: confirmationId, ...args } = (req.params.arguments ?? {}) as Record<string, unknown>;
       // A write needs the human's explicit approval of this exact action; checked before anything executes.
       if (cap.mutating && confirm !== true) {
+        recordHumanIntervention({ reason: "confirmation_required" });
         return fail(validationError([{ path: CONFIRM_ARG, message: "Ask the user to approve this exact action, then call again with confirm=true." }]));
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -174,6 +180,7 @@ export function createMcpHandler(deps: McpDeps) {
         await deps.authFailure?.(request);
         throw decorateAuthError(e, resource);
       }
+      recordAgentRequest({ channel: "mcp", actorKind: actor.kind });
 
       const text = await readCapped(request);
       let parsedBody: unknown;

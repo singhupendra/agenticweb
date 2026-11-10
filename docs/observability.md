@@ -29,18 +29,18 @@ Prometheus names assume the Collector's Prometheus exporter defaults (`.`→`_`,
 
 | OTel instrument | Prometheus | Attributes | Recorded by |
 |---|---|---|---|
-| `agenticweb.agent.requests` | `agenticweb_agent_requests_total` | `channel`, `actor_kind` | channel adapter: REST adapter (done); MCP server calls `recordAgentRequest({channel:"mcp",…})` |
-| `agenticweb.agent.tool_discoveries` | `…_tool_discoveries_total` | `channel`, `outcome` | MCP `tools/list`, OpenAPI, llms.txt call `recordToolDiscovery` |
+| `agenticweb.agent.requests` | `agenticweb_agent_requests_total` | `channel`, `actor_kind` | channel adapters: REST (`src/api/rest.ts`) and MCP (`src/agents/mcp/server.ts`) — both wired |
+| `agenticweb.agent.tool_discoveries` | `…_tool_discoveries_total` | `channel`, `outcome` | MCP `tools/list` (wired); OpenAPI/llms.txt may call `recordToolDiscovery` |
 | `agenticweb.agent.tool_invocations` | `…_tool_invocations_total` | `tool`, `actor_kind`, `outcome` (`success`/`invalid_argument`/`authz_rejected`/`conflict`/`rate_limited`/`error`) | executor hook (automatic) |
 | `agenticweb.agent.tool_duration` (ms histogram) | `…_tool_duration_milliseconds_bucket` | same | executor hook |
 | `agenticweb.agent.invalid_arguments` | `…_invalid_arguments_total` | `tool` | executor hook |
 | `agenticweb.agent.authz_rejections` | `…_authz_rejections_total` | `tool`, `code` | executor hook |
 | `agenticweb.agent.task_completions` | `…_task_completions_total` | `task`, `outcome` (`completed`/`failed`/`abandoned`) | executor hook for **mutating** capabilities; Phase 5 may add `abandoned` |
-| `agenticweb.agent.human_interventions` | `…_human_interventions_total` | `reason` | Phase 5 human-in-the-loop: `recordHumanIntervention` |
+| `agenticweb.agent.human_interventions` | `…_human_interventions_total` | `reason` | MCP server: `confirmation_required` (write without `confirm=true`) and `consent_required` (out-of-band approval gate) |
 
 Rules for callers: attribute values must be bounded enums or registry capability names — never user ids, emails, request ids, tokens, free text. The helpers copy only their declared keys (test: "never accepts free-form/PII attributes"), and unknown capability names are bucketed as `unknown`.
 
-**Wiring for new channels (MCP, Phase 4):** build the executor via `createRuntime` (already wired with `createOtelInstrument()`), call `recordAgentRequest({channel:"mcp", actorKind})` per MCP request and `recordToolDiscovery` in `tools/list`. Do not re-implement invocation metrics: they come from the executor for free.
+**Wiring for new channels:** build the executor via `createRuntime` (already wired with `createOtelInstrument()`), call `recordAgentRequest({channel:"mcp", actorKind})` per MCP request and `recordToolDiscovery` in `tools/list`. Do not re-implement invocation metrics: they come from the executor for free.
 
 ## Logging: tokens and PII never appear
 

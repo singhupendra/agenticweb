@@ -91,7 +91,7 @@ Real authN (sessions, OAuth/agent token verification — currently anonymous, or
 
 ## 10. Observability additions (DevOps)
 
-* `createExecutor({ instrument })` wraps the whole pipeline; `createRuntime` passes `createOtelInstrument()` (`src/observability`), which emits the `capability <name>` span and the agent metrics for every channel. Channel adapters call `recordAgentRequest` (REST done; MCP must do the same) and `recordToolDiscovery`. Never re-implement these in routes/MCP code.
+* `createExecutor({ instrument })` wraps the whole pipeline; `createRuntime` passes `createOtelInstrument()` (`src/observability`), which emits the `capability <name>` span and the agent metrics for every channel. Channel adapters call `recordAgentRequest` (REST and MCP done), `recordToolDiscovery` (MCP `tools/list`) and `recordHumanIntervention` (MCP confirm/consent). Never re-implement these in routes/MCP code.
 * New env vars `OTEL_*` live in `OtelEnvShape` (`core/env.ts`); telemetry is a no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`.
 * Logger redaction is key-based **and** value-based (`scrubString`). Never log request bodies; never put ids/emails/tokens/free text in span or metric attributes.
 * Production image/CI/deploy: `docs/deployment.md`; dashboards/alerts: `deploy/observability/`.
