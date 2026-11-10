@@ -9,9 +9,6 @@ concurrency:
   cancel-in-progress: true
 
 # Third-party actions are pinned to commit SHAs (tag in the comment); Dependabot keeps them current.
-env:
-  PG_URL: postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb
-
 jobs:
   verify:
     name: Lint, types, tests (Postgres), build
