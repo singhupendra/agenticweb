@@ -1,1 +1,14 @@
 # agenticweb
+
+Reference architecture for an **agent-ready website**: a consulting-studio booking site usable by humans (Next.js UI) and AI agents (REST/OpenAPI, remote MCP, optional WebMCP) from one set of capabilities.
+
+* Start here: [`docs/architecture.md`](docs/architecture.md), [`docs/CONTRACTS.md`](docs/CONTRACTS.md), [`docs/implementation-plan.md`](docs/implementation-plan.md)
+* Decisions: [`docs/technology-decisions.md`](docs/technology-decisions.md) · Threats: [`docs/threat-model.md`](docs/threat-model.md)
+
+```bash
+nvm use && pnpm install
+cp .env.example .env.local
+pnpm db:up && pnpm db:deploy && pnpm db:seed   # Postgres via docker compose
+pnpm dev
+pnpm lint && pnpm tsc --noEmit && pnpm test:run && pnpm build
+```
