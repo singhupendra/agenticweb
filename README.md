@@ -16,4 +16,4 @@ pnpm lint && pnpm tsc --noEmit && pnpm test:run && pnpm build
 Local Postgres without Docker: `brew install postgresql@16`, create role/db from `.env.example`, then `pnpm db:deploy && pnpm db:seed`.
 Integration tests: `DATABASE_URL_TEST=<url of a migrated, disposable db> pnpm test:run`.
 
-E2E: `pnpm exec playwright install chromium && E2E_DATABASE_URL=<migrated+seeded db> pnpm test:e2e` (see [`docs/agent-discovery.md`](docs/agent-discovery.md), [`docs/webmcp-integration.md`](docs/webmcp-integration.md)).
+E2E: `pnpm exec playwright install chromium && pnpm test:e2e:isolated` (creates a disposable `agenticweb_qa_*` DB; E2E refuses any other DB) (see [`docs/agent-discovery.md`](docs/agent-discovery.md), [`docs/webmcp-integration.md`](docs/webmcp-integration.md)).

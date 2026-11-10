@@ -2,7 +2,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 
 const url = process.env.DATABASE_URL ?? "postgresql://agenticweb:agenticweb_dev_only@localhost:5432/agenticweb";
-const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url, options: "-c timezone=UTC" }) /* see src/core/db PG_POOL_OPTIONS */ });
 
 // Deterministic IDs so the dev actor header (x-dev-actor) can reference seeded users.
 export const SEED_IDS = {
