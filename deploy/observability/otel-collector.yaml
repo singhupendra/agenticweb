@@ -2,8 +2,8 @@
 receivers:
   otlp:
     protocols:
-      grpc: { endpoint: 0.0.0.0:4317 }
-      http: { endpoint: 0.0.0.0:4318 }
+      grpc: { endpoint: "0.0.0.0:4317" }
+      http: { endpoint: "0.0.0.0:4318" }
 
 processors:
   memory_limiter: { check_interval: 1s, limit_mib: 256 }
@@ -20,10 +20,10 @@ processors:
 
 exporters:
   otlp/jaeger:
-    endpoint: jaeger:4317
+    endpoint: "jaeger:4317"
     tls: { insecure: true }
   prometheus:
-    endpoint: 0.0.0.0:8889
+    endpoint: "0.0.0.0:8889"
   debug:
     verbosity: basic
 
