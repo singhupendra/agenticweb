@@ -80,10 +80,12 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
         let scope = "";
         let key = "";
         let claimed = false;
+        let requestHash = "";
         if (cap.mutating) {
           key = assertValidKey(opts.idempotencyKey);
           scope = `${name}|${actorSubject(actor)}`;
-          const claim = await o.idempotency.claim(scope, key, hashInput(input), clock().getTime());
+          requestHash = hashInput(input);
+          const claim = await o.idempotency.claim(scope, key, requestHash, clock().getTime());
           if (claim.state === "mismatch") {
             throw new AppError("idempotency_key_reuse", "This Idempotency-Key was used with a different request.");
           }
@@ -107,14 +109,17 @@ export function createExecutor<Deps>(o: ExecutorOptions<Deps>): CapabilityExecut
             throw new AppError("internal", "output schema violation");
           }
           if (cap.mutating) {
-            await o.idempotency.complete(scope, key, out.data, clock().getTime() + IDEMPOTENCY_TTL_MS);
-            claimed = false; // completed: from here a retry replays instead of re-executing
+            // The mutation has committed. From here the claim must NEVER be released: if complete() fails the
+            // claim stays until its lease expires, so a retry cannot silently run the mutation a second time.
+            claimed = false;
+            await o.idempotency.complete(scope, key, requestHash, out.data, clock().getTime() + IDEMPOTENCY_TTL_MS);
           }
           // Audit AFTER the result is stored under the key. If this write fails the caller sees a 500 and the
           // retry's replay path writes the audit event, so the mutation cannot stay permanently unaudited.
           await audit("success", { resource });
           return toEnvelope(out.data, requestId);
         } finally {
+          // Only reached with claimed=true when execute/output validation failed (nothing committed): safe to release.
           if (claimed) await o.idempotency.release(scope, key).catch((e) => logger.error("idempotency release failed", { error: e }));
         }
       } catch (e) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ANONYMOUS } from "@/core/auth";
 import { createExecutor, createRegistry, defineCapability } from "@/core/capabilities";
+import type { IdempotencyStore } from "@/core/idempotency";
 import { DefaultPolicy } from "@/core/authorization";
 import { InMemoryIdempotencyStore } from "@/core/idempotency";
 import { InMemoryAuditLog, nullLogger, hashInput, type AuditEvent, type AuditLog } from "@/core/logging";
@@ -155,5 +156,33 @@ describe("idempotency: claim before execute (no check-then-act)", () => {
     expect(deps.counter.n).toBe(1); // not re-executed
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ outcome: "success", detail: { replayed: true } });
+  });
+  it("if complete() fails after the mutation committed, the claim is NOT released (no silent re-execution)", async () => {
+    const inner = new InMemoryIdempotencyStore();
+    let failComplete = true;
+    const store: IdempotencyStore = {
+      claim: (...a) => inner.claim(...a),
+      release: (...a) => inner.release(...a),
+      complete: async (...a) => { if (failComplete) throw new Error("db down"); return inner.complete(...a); },
+    };
+    const deps: Deps = { counter: { n: 0 } };
+    const executor = createExecutor<Deps>({ registry: createRegistry<Deps>([note]), policy: new DefaultPolicy(() => NOW), audit: new InMemoryAuditLog(),
+      idempotency: store, logger: nullLogger, deps, clock: () => NOW });
+    await expect(executor.invoke("notes.create", user, { text: "x" }, { idempotencyKey: KEY })).rejects.toThrow("db down");
+    expect(deps.counter.n).toBe(1);
+    failComplete = false;
+    // retry while the claim is held: refused, mutation not executed again
+    await expect(executor.invoke("notes.create", user, { text: "x" }, { idempotencyKey: KEY })).rejects.toMatchObject({ code: "conflict" });
+    expect(deps.counter.n).toBe(1);
+  });
+  it("a superseded claimant cannot overwrite the new claimant's record", async () => {
+    const s = new InMemoryIdempotencyStore();
+    const t = 1_000_000;
+    expect(await s.claim("sc", "key-aaaaaaaa", "h1", t)).toEqual({ state: "acquired" });
+    expect(await s.claim("sc", "key-aaaaaaaa", "h2", t + 61_000)).toEqual({ state: "acquired" }); // supersedes (lease expired)
+    await s.complete("sc", "key-aaaaaaaa", "h1", { stale: true }, t + 3600_000); // old claimant: ignored
+    expect(await s.claim("sc", "key-aaaaaaaa", "h2", t + 62_000)).toEqual({ state: "in_progress" });
+    await s.complete("sc", "key-aaaaaaaa", "h2", { fresh: true }, t + 3600_000);
+    expect(await s.claim("sc", "key-aaaaaaaa", "h2", t + 63_000)).toEqual({ state: "done", response: { fresh: true } });
   });
 });
