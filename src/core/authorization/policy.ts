@@ -3,6 +3,7 @@
  * Routes/tools/UI NEVER make authorization decisions themselves.
  */
 import { actorOrganizationId, effectiveUserId, type Actor, type Scope } from "../auth/actor";
+import { bearerChallenge } from "../auth/challenge";
 import { AppError, forbidden, notFound, unauthenticated } from "../errors";
 
 export type Access =
@@ -27,7 +28,7 @@ export interface ResourceRef {
 
 export type Decision =
   | { allowed: true }
-  | { allowed: false; reason: string; kind: "unauthenticated" | "forbidden" | "not_found" };
+  | { allowed: false; reason: string; kind: "unauthenticated" | "forbidden" | "not_found"; /** set when denied for a missing scope */ scope?: Scope };
 
 export interface AuthorizationPolicy {
   decide(actor: Actor, requirement: Requirement, resource?: ResourceRef): Decision;
@@ -40,6 +41,12 @@ export function enforce(decision: Decision): void {
   if (decision.allowed) return;
   if (decision.kind === "unauthenticated") throw unauthenticated();
   if (decision.kind === "not_found") throw notFound(); // hide existence (IDOR)
+  if (decision.scope) {
+    // RFC 6750 §3.1 / MCP: 403 + insufficient_scope naming the scope(s) needed. Adapters append resource_metadata.
+    throw new AppError("forbidden", "The token does not carry the scope required for this action.", {
+      headers: { "www-authenticate": bearerChallenge({ error: "insufficient_scope", scope: decision.scope }) },
+    });
+  }
   throw forbidden();
 }
 
@@ -57,7 +64,7 @@ export class DefaultPolicy implements AuthorizationPolicy {
         return { allowed: false, kind: "unauthenticated", reason: "delegation expired" };
       }
       if (req.scope && !actor.delegation.scopes.includes(req.scope)) {
-        return { allowed: false, kind: "forbidden", reason: `missing scope ${req.scope}` };
+        return { allowed: false, kind: "forbidden", reason: `missing scope ${req.scope}`, scope: req.scope };
       }
       if (req.access === "admin") return { allowed: false, kind: "forbidden", reason: "agents are never admin" };
     }

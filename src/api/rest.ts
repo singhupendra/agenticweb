@@ -4,9 +4,11 @@
  * Responsibilities here are strictly transport: parsing, actor resolution, headers, caching, error mapping.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { ANONYMOUS, DevHeaderActorResolver, type Actor, type ActorResolver } from "@/core/auth";
+import { actorSubject, decorateAuthError, resolveActor, resourceUri, type Actor, type ActorResolver } from "@/core/auth";
 import { AppError, notFound, problemResponse, validationError, type Envelope } from "@/core/errors";
 import { getEnv } from "@/core/env";
+import { InMemoryRateLimitStore, clientKey, createRateLimiter, readBodyWithLimit, type RateLimiter } from "@/core/security";
+import { CONFIRMATION_HEADER, getAgentGate, type AgentConfirmationGate } from "@/agents/policies";
 import type { AnyCapability, HttpBinding } from "@/core/capabilities";
 import { registry } from "@/capabilities";
 import { getRuntime, type Runtime } from "@/runtime";
@@ -19,13 +21,8 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_PUBLIC_CACHE_SECONDS = 60;
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
-let resolver: ActorResolver | undefined;
-export function defaultResolver(): ActorResolver {
-  const env = getEnv();
-  return (resolver ??= env.DEV_AUTH_ENABLED
-    ? new DevHeaderActorResolver({ enabled: true, nodeEnv: env.NODE_ENV })
-    : { resolve: async () => ANONYMOUS }); // TODO(Security): replaced by the session/token resolver
-}
+/** The one identity entry point (bearer → session+CSRF → dev header → anonymous). */
+export const defaultResolver: () => ActorResolver = () => ({ resolve: (r) => resolveActor(r) });
 
 /**
  * Hook for the rate limiter (owned by Security). Runs after the actor is known and before the capability.
@@ -37,6 +34,38 @@ export interface RestDeps {
   runtime: () => Runtime;
   resolver: () => ActorResolver;
   rateLimit?: RateLimitHook;
+  /** Called when authentication FAILED (before any actor exists); throttles credential-stuffing floods. */
+  authFailure?: (request: Request) => Promise<void>;
+  /** Human-confirmation gate for agent transactional scopes. */
+  gate?: () => AgentConfirmationGate;
+  maxBodyBytes?: () => number;
+  appUrl?: () => string;
+}
+
+/**
+ * Default rate limiting on top of `core/security`: authenticated subjects and anonymous clients get separate budgets,
+ * and failed authentications use their OWN bucket (at the anonymous limit) so a bad-token flood cannot exhaust the
+ * budget of legitimate anonymous callers.
+ */
+export function createRestRateLimiting(o: { limiter: RateLimiter; anonLimit: () => number; trustProxy: () => boolean }): Pick<RestDeps, "rateLimit" | "authFailure"> {
+  return {
+    rateLimit: async ({ request, actor }) => {
+      const anonymous = actor.kind === "anonymous";
+      await o.limiter.consume(anonymous ? clientKey(request, o.trustProxy()) : actorSubject(actor), anonymous ? o.anonLimit() : undefined);
+    },
+    authFailure: async (request) => {
+      await o.limiter.consume(`authfail:${clientKey(request, o.trustProxy())}`, o.anonLimit());
+    },
+  };
+}
+
+const lim = globalThis as unknown as { __restRateLimiting?: Pick<RestDeps, "rateLimit" | "authFailure"> };
+function defaultRateLimiting() {
+  return (lim.__restRateLimiting ??= createRestRateLimiting({
+    limiter: createRateLimiter({ store: new InMemoryRateLimitStore(), limit: getEnv().RATE_LIMIT_AUTH_PER_MIN, windowMs: 60_000 }),
+    anonLimit: () => getEnv().RATE_LIMIT_ANON_PER_MIN,
+    trustProxy: () => getEnv().TRUST_PROXY,
+  }));
 }
 
 /** Strong validator over the response payload only (never `meta.requestId`, which differs per request). */
@@ -87,31 +116,8 @@ function queryParams(url: URL): Record<string, string> {
   return out;
 }
 
-const tooLarge = () => new AppError("payload_too_large", `Body must be at most ${MAX_BODY_BYTES} bytes.`);
-
-/** Read the body incrementally and abort as soon as the cap is exceeded (Content-Length may be absent or false). */
-async function readCapped(request: Request): Promise<string> {
-  const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw tooLarge();
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
-      await reader.cancel().catch(() => undefined);
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function readBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await readCapped(request);
+async function readBody(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+  const text = await readBodyWithLimit(request, maxBytes);
   if (!text.trim()) return {};
   const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   if (type !== "application/json" && !type.endsWith("+json")) {
@@ -151,7 +157,17 @@ function successResponse(cap: AnyCapability<never>, binding: HttpBinding, envelo
   return new Response(JSON.stringify(envelope), { status, headers });
 }
 
-export function createRestHandler(capabilityName: string, deps: RestDeps = { runtime: getRuntime, resolver: defaultResolver }) {
+const DEFAULT_DEPS: RestDeps = {
+  runtime: getRuntime,
+  resolver: defaultResolver,
+  get rateLimit() { return defaultRateLimiting().rateLimit; },
+  get authFailure() { return defaultRateLimiting().authFailure; },
+  gate: getAgentGate,
+  maxBodyBytes: () => getEnv().MAX_BODY_BYTES,
+  appUrl: () => getEnv().APP_URL,
+};
+
+export function createRestHandler(capabilityName: string, deps: RestDeps = DEFAULT_DEPS) {
   return async (request: Request, ctx?: { params?: Promise<Record<string, string>> }): Promise<Response> => {
     const requestId = safeRequestId(request.headers.get("x-request-id"));
     const url = new URL(request.url);
@@ -163,11 +179,18 @@ export function createRestHandler(capabilityName: string, deps: RestDeps = { run
       const params = (await ctx?.params) ?? {};
       const query = queryParams(url);
       // Identify the caller and rate-limit BEFORE buffering any body, so unauthenticated floods stay cheap.
-      const actor = await deps.resolver().resolve(request);
+      let actor: Actor;
+      try {
+        actor = await deps.resolver().resolve(request);
+      } catch (e) {
+        await deps.authFailure?.(request);
+        throw e;
+      }
       await deps.rateLimit?.({ request, actor, capability: capabilityName, requestId });
-      const body = BODY_METHODS.has(request.method) ? await readBody(request) : {};
+      const body = BODY_METHODS.has(request.method) ? await readBody(request, deps.maxBodyBytes?.() ?? MAX_BODY_BYTES) : {};
       // Path params win over body/query so callers cannot override identifiers.
       const raw = { ...query, ...body, ...params };
+      await deps.gate?.().check(actor, cap, raw, request.headers.get(CONFIRMATION_HEADER));
       const envelope = await deps.runtime().executor.invoke(capabilityName, actor, raw, {
         requestId,
         idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
@@ -177,7 +200,7 @@ export function createRestHandler(capabilityName: string, deps: RestDeps = { run
       if (!(e instanceof AppError)) {
         getRuntimeLoggerSafe()?.error("rest handler error", { error: e, requestId });
       }
-      return problemResponse(e, { requestId, instance: url.pathname });
+      return problemResponse(decorateAuthError(e, resourceUri(deps.appUrl?.() ?? getEnv().APP_URL, "rest")), { requestId, instance: url.pathname });
     }
   };
 }

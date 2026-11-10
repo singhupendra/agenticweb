@@ -61,7 +61,7 @@ Capability `module.verb` (`services.list`) · MCP tool `snake_case` verb_noun (`
 
 ## 6. Known gaps (owned by later phases)
 
-Real authN (sessions, OAuth/agent token verification — currently anonymous, or the dev header `x-dev-actor` when `DEV_AUTH_ENABLED=true`, refused in production) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · OpenTelemetry · rate limiting · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
+Persistent GrantStore + consent UI, OIDC authorization-code login redirect, durable confirmation store, shared (Redis/Postgres) rate-limit store (see `docs/authentication.md`) · users capabilities (schemas + interface only) · MCP server, discovery, WebMCP · OpenTelemetry · Playwright E2E · replayed idempotent requests are not audited · no key-in-progress reservation (concurrent identical requests rely on DB constraints; see SPEC-002).
 
 ## 7. Phase 2 additions (bookings and slots)
 
@@ -78,3 +78,11 @@ Real authN (sessions, OAuth/agent token verification — currently anonymous, or
 * New error codes: `payload_too_large` (413), `unsupported_media_type` (415), `method_not_allowed` (405).
 * Every route file must be `export const METHOD = restHandler("<capability>")` for each binding (checked by `tests/api/openapi-document.test.ts`).
 * Rate limiting plugs into `RestDeps.rateLimit` (see api-guide).
+
+## 9. Phase 3 additions (authn / security)
+
+* **`resolveActor(request, {resource?: "rest"|"mcp"})`** (`core/auth/resolve-actor.ts`) is THE identity entry point for every channel. Bearer (JWKS, audience-bound) → session cookie (+CSRF) → dev header → anonymous; invalid credentials are 401, never anonymous. Details and the MCP guide: `docs/authentication.md`.
+* Auth errors: adapters pass errors through `decorateAuthError(e, resourceUri(appUrl, kind))` before `problemResponse` so 401/`insufficient_scope` carry `WWW-Authenticate … resource_metadata`.
+* Transactional agent scopes need human confirmation: `getAgentGate().check(actor, cap, input, confirmationId)` (428 `confirmation_required`).
+* Reusable limits in `core/security` (`createRateLimiter`, `readBodyWithLimit`, `ReplayGuard`). New error code `confirmation_required` (428). `readBodyWithLimit` is the single body-cap implementation (REST uses it; MCP must too).
+* New scopes/capabilities must be added to `tests/authz-matrix.test.ts`.

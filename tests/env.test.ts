@@ -8,5 +8,11 @@ describe("env validation", () => {
   it("rejects non-postgres URL", () => expect(() => loadEnv({ DATABASE_URL: "http://x.test" })).toThrow(/postgres/));
   it("rejects DEV_AUTH_ENABLED in production", () =>
     expect(() => loadEnv({ ...base, NODE_ENV: "production", DEV_AUTH_ENABLED: "true" })).toThrow(/DEV_AUTH_ENABLED/));
-  it("allows production without dev auth", () => expect(loadEnv({ ...base, NODE_ENV: "production" }).NODE_ENV).toBe("production"));
+  const prod = { ...base, NODE_ENV: "production", AUTH_ISSUER: "https://idp.example.com", SESSION_SECRET: "x".repeat(32) };
+  it("allows production with issuer + session secret", () => expect(loadEnv(prod).NODE_ENV).toBe("production"));
+  it("requires issuer and session secret in production", () => {
+    expect(() => loadEnv({ ...base, NODE_ENV: "production" })).toThrow(/AUTH_ISSUER[\s\S]*SESSION_SECRET/);
+  });
+  it("rejects the mock issuer in production", () => expect(() => loadEnv({ ...prod, MOCK_ISSUER_ENABLED: "true" })).toThrow(/MOCK_ISSUER_ENABLED/));
+  it("rejects a short session secret", () => expect(() => loadEnv({ ...base, SESSION_SECRET: "short" })).toThrow(/SESSION_SECRET/));
 });

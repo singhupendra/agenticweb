@@ -20,6 +20,7 @@ export const ERROR_CODES = {
   unsupported_media_type: { status: 415, title: "Unsupported media type" },
   method_not_allowed: { status: 405, title: "Method not allowed" },
   rate_limited: { status: 429, title: "Too many requests" },
+  confirmation_required: { status: 428, title: "Human confirmation required" },
   not_ready: { status: 503, title: "Service not ready" },
   internal: { status: 500, title: "Internal server error" },
 } as const;

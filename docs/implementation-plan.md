@@ -56,12 +56,21 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Slot list on service page | Architect | done | live page shows slots in org timezone |
 | 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
 | 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
-| 3–7 | remaining items (identity/authz, MCP, quality, delivery) | various | todo | — |
 | 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
 | 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
 | 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
 | 5 | WebMCP (feature-detected, confirm on mutations) | Frontend | done (spec is a CG draft) | `tests/discovery/webmcp.test.ts`, `tests/e2e/webmcp.spec.ts`, `docs/webmcp-integration.md` |
 | 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (not in CI yet) | see Verification (Frontend) |
+| 3 | OIDC/OAuth 2.1 bearer verification (jose/JWKS), audience/issuer/exp/alg pinning, mock issuer | Security | done | `tests/auth-tokens.test.ts`; live: mock-issuer tokens accepted, bad/expired/wrong-audience → 401 |
+| 3 | `resolveActor(request, {resource})` single entry point; dev resolver demoted | Security | done | `tests/auth-resolve.test.ts`; REST adapter uses it |
+| 3 | Sessions + CSRF (cookie, HMAC token, Origin) | Security | done | `tests/auth-session.test.ts` |
+| 3 | Agent delegation: grant narrowing/revocation, never admin, TTL cap, human confirmation for `bookings:write` (+ approve endpoint) | Security | done (in-memory grant/confirmation stores) | `tests/auth-tokens.test.ts`, `tests/auth-http.test.ts`; live 428 → approve → 201 → replay 403 |
+| 3 | RFC 9728 metadata + WWW-Authenticate (401 / insufficient_scope), checked against MCP spec draft 2026-11-10 | Security | done | `tests/auth-resolve.test.ts`; live `/.well-known/oauth-protected-resource[/mcp]` |
+| 3 | Rate limit, body-size limit, replay guard (pluggable, in-memory default), safe errors | Security | done (REST wired; MCP wires in P4) | `tests/security-helpers.test.ts`, `tests/auth-http.test.ts`; live 413 |
+| 3 | Authorization matrix (13 profiles × 7 capabilities = 91 cells + IDOR/expiry/audience/escalation/replay) | Security | done | `tests/authz-matrix.test.ts`, `tests/auth-http.test.ts` |
+| 3 | docs/authentication.md (+ MCP worker guide), docs/authorization.md, threat-model rows | Security | done | files |
+| 3 | Persistent GrantStore, OIDC code-flow login, durable confirmations, shared rate-limit store | Backend/Frontend | todo (documented gaps) | — |
+| 4–7 | see phases above | various | todo | — |
 
 ## Verification (Phase 1)
 
@@ -179,3 +188,25 @@ $ E2E_DATABASE_URL=…/agenticweb_fe pnpm test:e2e
 
 Covered end-to-end: anonymous browse, sign-in-required states, signed-in book → status → cancel (double-submit safe via per-render Idempotency-Key), validation error announced, unknown/foreign booking → not-found, JSON-LD FAQ == visible FAQ, discovery files, WebMCP absent (site works) and polyfilled (read-only tools for anon, REST parity, confirm/decline on mutation).
 **Not verified:** Google Rich Results validator (needs public URL), real browser with native WebMCP, screen-reader manual pass, E2E in CI.
+
+
+## Verification (Phase 3 — authn/security)
+
+Node v24.15.0, pnpm 10.33.0, 2026-11-10, after merging main (REST v1 / OpenAPI #3, site/WebMCP #4). Raw output (final run without `DATABASE_URL_TEST`: 13 Postgres tests skipped locally; they passed earlier in this phase and run in CI against a Postgres service):
+
+```
+$ pnpm lint
+> eslint .
+$ pnpm tsc --noEmit
+(exit 0)
+$ pnpm test:run
+ Test Files  20 passed | 1 skipped (21)
+      Tests  342 passed | 13 skipped (355)
+$ pnpm build
+✓ Compiled successfully
+  Finished TypeScript
+```
+
+Mutation checks (each removal made ≥1 test fail): audience check, issuer check, grant scope narrowing, grant revocation, agent TTL cap, CSRF check, Origin check, confirmation single-use, confirmation input binding, anyone-can-approve, `resource_metadata` decoration, streamed body cap, failed-auth throttling. After AO review, added: separate failed-auth bucket, fail-closed rate-limit store, bounded confirmation store (tests + mutants caught). Two equivalent mutants survived (explicit `algorithms` pin — jose already rejects by key type; agent-kind approver check — agents have no `userId`), kept as defence in depth.
+
+Live (next dev, mock issuer, local Postgres): anonymous → 401 + `resource_metadata`; PRM docs served; user/agent tokens work; agent booking → 428 → human approve → 201 → confirmation replay 403; agent self-approve 403; other user GET booking 404 / owner 200; MCP-audience token on REST 401; expired token 401 (`error_description` "expired"); 70 KB body 413.
