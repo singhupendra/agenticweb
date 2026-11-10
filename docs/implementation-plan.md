@@ -54,10 +54,14 @@ Status: `todo` · `in-progress` · `done` · `blocked`.
 | 2 | Overbooking protection | Architect | done | `tests/db`: 10 racers/cap 1 → 1 winner; cap 3 → 3. Mutation check: removing `FOR UPDATE` makes both fail (10 successes) |
 | 2 | Durable idempotency + audit (Postgres) | Architect | done | replay across runtime instances; AuditEvent rows for success/denied, hash only |
 | 2 | Slot list on service page | Architect | done | live page shows slots in org timezone |
-| 2 | Booking UI / human sign-in | Frontend/Backend | todo | needs Phase 3 session auth |
 | 3 | REST v1 + OpenAPI 3.1 (generated from registry), `/openapi.json`, `/docs`, contract suite | Backend (REST) | done | See "REST v1 verification" below; docs/api-guide.md |
 | 3 | Filtering/sorting/pagination (`Link`), ETag/304 + Cache-Control on public reads, `bookings.update` (PATCH), DELETE cancel alias, rate-limit hook | Backend (REST) | done | `tests/api/*`, `tests/rest-v1-domain.test.ts`, `tests/db` (real Postgres) |
-| 3–7 | remaining items (identity/authz, MCP, WebMCP, quality, delivery) | various | todo | — |
+| 3–7 | remaining items (identity/authz, MCP, quality, delivery) | various | todo | — |
+| 2 | Booking UI (catalogue, slot picker, accessible booking form, status/cancel, loading/error/not-found) | Frontend | done (sign-in itself still Phase 3) | see Verification (Frontend), `tests/e2e/site.spec.ts` |
+| 2 | Human sign-in | Backend | todo | needs Phase 3 session auth |
+| 2/5 | JSON-LD generators, robots.txt, sitemap.xml, llms.txt | Frontend | done | `tests/discovery/*`, `docs/agent-discovery.md` |
+| 5 | WebMCP (feature-detected, confirm on mutations) | Frontend | done (spec is a CG draft) | `tests/discovery/webmcp.test.ts`, `tests/e2e/webmcp.spec.ts`, `docs/webmcp-integration.md` |
+| 5/6 | Playwright config + human-flow E2E with axe | Frontend | done (not in CI yet) | see Verification (Frontend) |
 
 ## Verification (Phase 1)
 
@@ -161,3 +165,17 @@ Contract suite (`tests/api`, 46 tests): every response is validated with Ajv (JS
 Gaps: no OpenAPI meta-schema validation (structural checks only: refs resolve, unique operationIds, path params declared); `bookings.update` not exposed to MCP; rate limiting is a hook only; `resolveActor` does not exist yet in `core/auth`, the adapter still uses the `ActorResolver` interface through `defaultResolver()` (Security replaces it).
 
 AO review follow-up: request body is now read as a capped stream (413 aborts the read), after actor resolution + rate-limit hook; `x-request-id` is accepted only if `^[A-Za-z0-9._-]{1,128}$`, else a UUID is generated. Both covered by new tests that fail on the previous implementation.
+### Verification (Frontend: site, discovery, WebMCP) — Node 24.15.0, local Postgres 16, 2026-11-10
+
+```
+$ pnpm lint            → eslint . (exit 0, no output)
+$ pnpm tsc --noEmit    → exit 0
+$ pnpm test:run        → Test Files  11 passed | 1 skipped (12); Tests  113 passed | 12 skipped (125)
+                         (31 new: tests/discovery/{jsonld,crawl,webmcp}.test.ts; skipped = Postgres integration tests, DATABASE_URL_TEST unset)
+$ pnpm build           → Compiled successfully; routes incl. /, /services, /services/[serviceSlug], /bookings/[bookingId], /llms.txt, /robots.txt, /sitemap.xml
+$ E2E_DATABASE_URL=…/agenticweb_fe pnpm test:e2e
+                       → 31 passed, 1 skipped (keyboard test skipped on mobile), desktop + Pixel 5, axe wcag2a/2aa/21a/21aa clean on home, services, detail (anon + signed-in form), booking status
+```
+
+Covered end-to-end: anonymous browse, sign-in-required states, signed-in book → status → cancel (double-submit safe via per-render Idempotency-Key), validation error announced, unknown/foreign booking → not-found, JSON-LD FAQ == visible FAQ, discovery files, WebMCP absent (site works) and polyfilled (read-only tools for anon, REST parity, confirm/decline on mutation).
+**Not verified:** Google Rich Results validator (needs public URL), real browser with native WebMCP, screen-reader manual pass, E2E in CI.
