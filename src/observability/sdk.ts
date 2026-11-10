@@ -37,7 +37,13 @@ export function startTelemetry(env: Parameters<typeof resolveTelemetryConfig>[0]
   });
   sdk.start();
   const handle: TelemetryHandle = { config, shutdown: () => sdk.shutdown() };
-  // Flush on graceful termination so the last spans/metrics are not lost.
-  process.once("SIGTERM", () => void handle.shutdown());
+  // Flush on graceful termination so the last spans/metrics are not lost. A bare SIGTERM listener would remove Node's
+  // default terminate behaviour, so once we have flushed, re-deliver the signal if nobody else handles it
+  // (Next's server installs its own handler and exits itself). `started` guards against double registration.
+  process.once("SIGTERM", () => {
+    void handle.shutdown().finally(() => {
+      if (process.listenerCount("SIGTERM") === 0) process.kill(process.pid, "SIGTERM");
+    });
+  });
   return (started = handle);
 }
