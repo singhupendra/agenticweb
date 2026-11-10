@@ -50,7 +50,7 @@ export const createBooking = defineCapability({
   requirement: { access: "authenticated", scope: "bookings:write" },
   mutating: true,
   http: { method: "POST", path: "/api/organizations/{orgSlug}/bookings", successStatus: 201 },
-  mcp: { toolName: "create_booking", exposed: true, description: "Book a slot for the user you act for. Requires an idempotencyKey; retry with the same key is safe." },
+  mcp: { toolName: "create_booking", exposed: true, description: "Book a slot for the user you act for. Requires an idempotencyKey and explicit user confirmation; retry with the same key is safe." },
   loadResource: (ctx: Ctx, i) => orgResource(ctx, i.orgSlug),
   execute: (ctx: Ctx, i) =>
     ctx.deps.bookings.create({ orgSlug: i.orgSlug, userId: requireUserId(ctx.actor), slotId: i.slotId, notes: i.notes, now: ctx.now }),
@@ -90,7 +90,7 @@ export const updateBooking = defineCapability({
   requirement: { access: "owner-or-admin", scope: "bookings:write" },
   mutating: true,
   http: { method: "PATCH", path: "/api/organizations/{orgSlug}/bookings/{bookingId}" },
-  mcp: { toolName: "update_booking", exposed: false, description: "Change the notes on one of the user's bookings. Requires an idempotencyKey." },
+  mcp: { toolName: "update_booking", exposed: true, description: "Change the notes on one of the user's bookings. Requires an idempotencyKey and explicit user confirmation." },
   loadResource: (ctx: Ctx, i) => bookingResource(ctx, i.orgSlug, i.bookingId),
   execute: (ctx: Ctx, i) => ctx.deps.bookings.updateNotes({ orgSlug: i.orgSlug, bookingId: i.bookingId, notes: i.notes }),
 });
@@ -104,7 +104,7 @@ export const cancelBooking = defineCapability({
   mutating: true,
   http: { method: "POST", path: "/api/organizations/{orgSlug}/bookings/{bookingId}/cancel" },
   httpAliases: [{ method: "DELETE", path: "/api/organizations/{orgSlug}/bookings/{bookingId}" }],
-  mcp: { toolName: "cancel_booking", exposed: true, description: "Cancel one of the user's bookings. Requires an idempotencyKey." },
+  mcp: { toolName: "cancel_booking", exposed: true, destructive: true, description: "Cancel one of the user's bookings (cannot be undone). Requires an idempotencyKey and explicit user confirmation." },
   loadResource: (ctx: Ctx, i) => bookingResource(ctx, i.orgSlug, i.bookingId),
   execute: (ctx: Ctx, i) => ctx.deps.bookings.cancel({ orgSlug: i.orgSlug, bookingId: i.bookingId, now: ctx.now }),
 });
